@@ -4,6 +4,9 @@ All notable changes to Codex Mobile Bridge are documented here.
 
 ## Unreleased
 
+- Harden Windows setup against missing Tailscale Serve status fields and premature
+  version-probe termination. Show Tailscale Serve activation instructions on startup.
+
 - Show active conversations with a red Running badge beside the title, matching
   the unread badge in both themes. Keep both badges visible when applicable and
   clear the running badge when work finishes.
