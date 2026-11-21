@@ -4,6 +4,9 @@ All notable changes to Codex Mobile Bridge are documented here.
 
 ## Unreleased
 
+- Harden Windows setup against missing Tailscale Serve status fields and premature
+  version-probe termination. Show Tailscale Serve activation instructions on startup.
+
 - Mark completed turns unread when the runtime does not supply an unread
   position, including while the phone is disconnected. Preserve newer receipts
   and acknowledge the loaded transcript revision when reopening a conversation.
