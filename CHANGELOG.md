@@ -4,6 +4,15 @@ All notable changes to Codex Mobile Bridge are documented here.
 
 ## Unreleased
 
+- Move recently active conversations up immediately and synchronize generated names
+  and previews with the sidebar and chat header without a page reload. Preserve
+  desktop pin order, loaded history pages, and unsent drafts during reconciliation.
+- Clear running indicators for background conversations and prevent stale metadata,
+  delayed start responses, and older completed turns from restoring obsolete activity.
+  Distinguish reported activity from confirmed ownership by another client.
+- Reconcile conversation summaries and selected message history every ten seconds
+  while the page is visible. Keep selected history current during searches, retain
+  live SSE text, and let history load independently of metadata read failures.
 - Start the watchdog at boot so the bridge recovers after a reboot without an
   interactive logon.
 - Harden Windows setup against missing Tailscale Serve status fields and premature

@@ -15,6 +15,16 @@ import {
 import { createMessageView } from "./modules/messages.js";
 import { EventStreamController } from "./modules/event-stream.js";
 import { state } from "./modules/state.js";
+import {
+  applyThreadSummaryEvent,
+  mergeThreadSummary,
+  noteThreadActivity,
+  orderedThreads,
+  patchThreadSummary,
+  reconcileActiveTurns,
+  startThreadTurn,
+  summaryVersion,
+} from "./modules/thread-summaries.js";
 import { hasStoredLanguage, language, setLanguage, t, toggleLanguage, translateDocument } from "./modules/i18n.js";
 import { createPwaController } from "./modules/pwa.js";
 
@@ -57,6 +67,41 @@ const compactActionLayout = matchMedia("(max-width: 520px)");
 let recentWorkspaces = [];
 let activeWorkspaceIndex = -1;
 let archivingThreadId = null;
+const pendingSummaryIds = new Set();
+let summarySyncTimer = null;
+
+function scheduleThreadSummarySync(threadId) {
+  if (!threadId) return;
+  pendingSummaryIds.add(threadId);
+  if (summarySyncTimer !== null) return;
+  summarySyncTimer = setTimeout(async () => {
+    summarySyncTimer = null;
+    const ids = [...pendingSummaryIds];
+    pendingSummaryIds.clear();
+    await Promise.allSettled(ids.map(async (id) => {
+      const since = summaryVersion(state);
+      const result = await api(`/api/threads/${encodeURIComponent(id)}`);
+      mergeThreadSummary(state, threadObject(result), since);
+    }));
+    renderThreads();
+    syncSelectedActivity();
+    if (state.selected) elements.chatTitle.textContent = titleOf(state.selected);
+  }, 350);
+}
+
+function pollThreadSummaries() {
+  if (document.hidden || !state.ready || ["offline", "degraded"].includes(state.connection) || state.submitting) return;
+  if (!state.threadsLoading && !elements.threadSearch.value.trim()) {
+    void loadThreads({ preserveSelection: true, refresh: true, preserveLoaded: true });
+  }
+  if (state.selected) {
+    scheduleThreadSummarySync(state.selected.id);
+    // Keep live SSE text intact; metadata polling still detects a missed completion.
+    if (!state.historyLoading && !state.historySyncPromise && !(state.busy && state.streaming.size)) {
+      void syncSelectedThread({ background: true });
+    }
+  }
+}
 
 const { emptyState, isNearBottom, renderMessages, renderEntryBody, scrollToBottom } = createMessageView({
   elements,
@@ -100,7 +145,7 @@ function setConnection(connection, ready = state.ready) {
   updateComposer();
 }
 
-function syncSnapshot(snapshot) {
+function syncSnapshot(snapshot, since = null) {
   if (!snapshot) return;
   const previousInstanceId = state.snapshot?.eventStream?.instanceId;
   if (!hasStoredLanguage() && snapshot.uiLanguage && snapshot.uiLanguage !== language()) {
@@ -108,7 +153,7 @@ function syncSnapshot(snapshot) {
   }
   state.snapshot = snapshot;
   state.ready = Boolean(snapshot.ready);
-  state.activeTurns = snapshot.activeTurns || {};
+  reconcileActiveTurns(state, snapshot.activeTurns || {}, since);
   state.queuedByThread = snapshot.drafts?.queuedByThread || {};
   elements.bridgeVersion.textContent = snapshot.version ? `v${snapshot.version}` : t("app.subtitle");
   syncSelectedActivity();
@@ -161,10 +206,9 @@ function upsertSelectedQueue(item) {
 }
 
 function updateTurnState(kind = null, label = null) {
-  const active = kind || (state.busy ? "running" : state.externalWriter ? "waiting" : "idle");
-  const text = label || (state.busy
-    ? (state.activeTurnId ? t("turn.running") : t("turn.runningElsewhere"))
-    : state.externalWriter ? t("turn.waitingOtherClient") : t("turn.idle"));
+  const active = kind || (state.externalWriter ? "waiting" : state.busy ? (state.activeTurnId ? "running" : "waiting") : "idle");
+  const text = label || (state.externalWriter ? t("turn.heldElsewhere") : state.busy
+    ? t(state.activeTurnId ? "turn.running" : "turn.syncing") : t("turn.idle"));
   elements.turnState.className = `turn-state ${active}`;
   elements.turnState.querySelector("b").textContent = text;
   updateComposer();
@@ -399,6 +443,8 @@ function closeDrawer() {
 }
 
 function renderThreads() {
+  state.threads = orderedThreads(state.threads, state.pinnedThreadIds);
+  const previousTop = elements.threadList.scrollTop;
   elements.threadCount.textContent = t("threads.count", { count: state.threads.length });
   const threadButton = (thread) => {
     const button = document.createElement("button");
@@ -454,17 +500,20 @@ function renderThreads() {
     nodes.push(empty);
   }
   elements.threadList.replaceChildren(...nodes);
+  elements.threadList.scrollTop = previousTop;
   elements.loadMoreThreads.classList.toggle("hidden", !state.threadsCursor);
   elements.loadMoreThreads.disabled = state.threadsLoading;
   elements.loadMoreThreads.textContent = state.threadsLoading ? t("actions.loading") : t("actions.loadMore");
 }
 
-async function loadThreads({ append = false, preserveSelection = true, refresh = false } = {}) {
-  if (append && state.threadsLoading) return;
+async function loadThreads({ append = false, preserveSelection = true, refresh = false, preserveLoaded = false } = {}) {
+  if ((append || preserveLoaded) && state.threadsLoading) return;
+  const since = summaryVersion(state);
+  const hadThreads = state.threads.length > 0;
   const threadClient = state.threadClient;
   const requestVersion = ++state.threadsRequestVersion;
   state.threadsLoading = true;
-  if (!append) {
+  if (!append && !preserveLoaded) {
     state.threadsCursor = null;
     if (!state.threads.length) elements.threadList.replaceChildren(listState(t("threads.loading")));
   }
@@ -485,23 +534,26 @@ async function loadThreads({ append = false, preserveSelection = true, refresh =
       }),
     ]);
     if (requestVersion !== state.threadsRequestVersion || threadClient !== state.threadClient) return;
-    const incoming = threadData(result);
-    const pinned = append ? [] : threadData(pinnedResult);
+    const incoming = threadData(result).map((thread) => mergeThreadSummary(state, thread, since));
+    const pinned = append ? [] : threadData(pinnedResult).map((thread) => mergeThreadSummary(state, thread, since));
     if (!append) state.pinnedThreadIds = pinned.map((thread) => thread.id);
-    const merged = append ? [...state.threads, ...incoming] : [...pinned, ...incoming];
+    const local = !search ? state.threads.filter((thread) => thread.localDraft || (state.threadSummaryRevisions?.get(thread.id) || 0) > since) : [];
+    const merged = append || preserveLoaded ? [...state.threads, ...pinned, ...incoming] : [...pinned, ...incoming, ...local];
     state.threads = [...new Map(merged.map((thread) => [thread.id, thread])).values()];
-    state.threadsCursor = result.nextCursor || null;
-    hideBanner();
+    if (!preserveLoaded || !hadThreads) state.threadsCursor = result.nextCursor || null;
+    if (!preserveLoaded) hideBanner();
     if (!preserveSelection || !state.selected) {
       if (state.threads[0]) await selectThread(state.threads[0]);
     } else {
       const fresh = state.threads.find((thread) => thread.id === state.selected.id);
       if (fresh) state.selected = { ...state.selected, ...fresh };
     }
+    syncSelectedActivity();
+    if (state.selected) elements.chatTitle.textContent = titleOf(state.selected);
   } catch (error) {
     if (requestVersion !== state.threadsRequestVersion || threadClient !== state.threadClient) return;
     const info = errorInfo(error);
-    showBanner(info.message, { retry: info.retryable ? () => loadThreads({ append, refresh }) : null });
+    if (!preserveLoaded) showBanner(info.message, { retry: info.retryable ? () => loadThreads({ append, refresh }) : null });
   } finally {
     if (requestVersion === state.threadsRequestVersion) {
       state.threadsLoading = false;
@@ -541,6 +593,7 @@ function listState(text) {
 
 async function selectThread(summary, { isNew = false, silent = false } = {}) {
   const version = ++state.selectionVersion;
+  const since = summaryVersion(state);
   state.selected = summary;
   state.historyItems = [];
   state.queuedMessages = [];
@@ -571,13 +624,14 @@ async function selectThread(summary, { isNew = false, silent = false } = {}) {
       api(`/api/threads/${encodeURIComponent(summary.id)}/queue`),
     ]);
     if (version !== state.selectionVersion) return;
-    state.selected = { ...summary, ...threadObject(threadResult) };
+    mergeThreadSummary(state, threadObject(threadResult), since);
     renderModelControls();
     state.historyItems = entriesFromTurns(turnsResult);
     state.historyCursor = turnsResult.nextCursor || null;
     state.latestTurnId = latestTurnId(turnsResult);
     setSelectedQueue(queueResult);
     syncSelectedActivity();
+    renderThreads();
     elements.chatTitle.textContent = titleOf(state.selected);
     elements.chatMeta.textContent = state.selected.cwd || t("threads.noCwd");
     hideBanner();
@@ -639,7 +693,7 @@ function mergeTurnDelta(result) {
   state.streaming.clear();
 }
 
-async function syncSelectedThread() {
+async function syncSelectedThread({ background = false } = {}) {
   if (!state.selected) return;
   if (state.historySyncPromise) {
     state.historySyncQueued = true;
@@ -647,25 +701,41 @@ async function syncSelectedThread() {
   }
   const selectedId = state.selected.id;
   const version = state.selectionVersion;
+  const since = summaryVersion(state);
+  const historyRevision = state.historyRevision || 0;
   const knownTurnId = state.latestTurnId || "";
+  if (!background) {
+    // Metadata is optional: a slow or failed read must not hold up message history.
+    void api(`/api/threads/${encodeURIComponent(selectedId)}`).then((result) => {
+      if (version !== state.selectionVersion || selectedId !== state.selected?.id) return;
+      mergeThreadSummary(state, threadObject(result), since);
+      syncSelectedActivity();
+      elements.chatTitle.textContent = titleOf(state.selected);
+      renderThreads();
+    }).catch(() => {});
+  }
   state.historySyncPromise = (async () => {
     const query = new URLSearchParams({ limit: String(TURN_PAGE_SIZE) });
     if (knownTurnId) query.set("knownTurnId", knownTurnId);
     const [result, queueResult] = await Promise.all([
       api(`/api/threads/${encodeURIComponent(selectedId)}/sync?${query}`, { timeoutMs: 45_000 }),
-      api(`/api/threads/${encodeURIComponent(selectedId)}/queue`),
+      api(`/api/threads/${encodeURIComponent(selectedId)}/queue`).catch(() => null),
     ]);
     if (version !== state.selectionVersion || selectedId !== state.selected?.id) return;
+    if (historyRevision !== (state.historyRevision || 0) || (background && (state.submitting || state.historyLoading))) return;
     const nearBottom = isNearBottom();
     const previousHeight = elements.messages.scrollHeight;
     const previousTop = elements.messages.scrollTop;
     mergeTurnDelta(result);
-    setSelectedQueue(queueResult);
+    if (queueResult) setSelectedQueue(queueResult);
+    syncSelectedActivity();
+    elements.chatTitle.textContent = titleOf(state.selected);
+    renderThreads();
     renderMessages();
     if (!nearBottom) elements.messages.scrollTop = previousTop + (elements.messages.scrollHeight - previousHeight);
   })().catch((error) => {
     const info = errorInfo(error);
-    if (info.retryable) showBanner(info.message, { retry: () => syncSelectedThread() });
+    if (!background && info.retryable) showBanner(info.message, { retry: () => syncSelectedThread() });
   }).finally(() => {
     state.historySyncPromise = null;
     if (state.historySyncQueued) {
@@ -698,7 +768,8 @@ function updateComposer() {
   if (!selected) elements.composerHint.textContent = t("composer.select");
   else if (recovering) elements.composerHint.textContent = t("composer.recovering");
   else if (!canConnect) elements.composerHint.textContent = t("composer.disconnected");
-  else if (state.externalWriter || (state.busy && !state.activeTurnId)) elements.composerHint.textContent = t("composer.otherClientQueue");
+  else if (state.externalWriter) elements.composerHint.textContent = t("composer.otherClientQueue");
+  else if (state.busy && !state.activeTurnId) elements.composerHint.textContent = t("composer.syncingActivity");
   else if (state.busy) elements.composerHint.textContent = t("composer.queueHint");
   else elements.composerHint.textContent = t("composer.keyboardHint");
   updateArchiveActions();
@@ -756,8 +827,10 @@ async function sendMessage(event) {
   const text = elements.messageInput.value.trim();
   if (!text) return;
   const threadId = state.selected.id;
+  const version = state.selectionVersion;
   const queuedCount = Number(state.queuedByThread[threadId] || 0);
   const mode = state.busy || state.externalWriter || queuedCount > 0 ? "queue" : "start";
+  state.historyRevision = (state.historyRevision || 0) + 1;
   const entry = { id: `local:${Date.now()}`, turnId: null, role: "user", text, type: mode === "queue" ? t("message.queued") : "userMessage", pending: true };
   state.historyItems.push(entry);
   elements.messageInput.value = "";
@@ -773,14 +846,19 @@ async function sendMessage(event) {
       timeoutMs: 45_000,
     });
     entry.pending = false;
+    noteThreadActivity(state, threadId, { text });
+    patchThreadSummary(state, threadId, { localDraft: false });
     if (result?.mode === "start") {
       const turnId = result?.turn?.id || null;
-      if (turnId) {
-        entry.turnId = turnId;
-        state.activeTurnId = turnId;
-        state.activeTurns[threadId] = turnId;
-      }
-      state.busy = true;
+      entry.turnId = turnId;
+      startThreadTurn(state, threadId, turnId);
+    }
+    renderThreads();
+    scheduleThreadSummarySync(threadId);
+    if (version !== state.selectionVersion || threadId !== state.selected?.id) return;
+    syncSelectedActivity();
+    elements.chatTitle.textContent = titleOf(state.selected);
+    if (result?.mode === "start") {
       updateTurnState();
     } else if (result?.mode === "queue") {
       state.historyItems = state.historyItems.filter((item) => item !== entry);
@@ -793,14 +871,17 @@ async function sendMessage(event) {
     }
     renderMessages();
   } catch (error) {
+    if (version !== state.selectionVersion || threadId !== state.selected?.id) {
+      localStorage.setItem(draftKey(threadId), text);
+      return;
+    }
     const info = errorInfo(error);
     entry.pending = false;
     state.historyItems.push({ id: `error:${Date.now()}`, role: "tool", text: info.message, type: t("message.sendFailed"), pending: false });
     if (info.code === "turn_active" && info.details?.turnId) {
-      state.activeTurnId = info.details.turnId;
-      state.activeTurns[threadId] = info.details.turnId;
-      state.busy = true;
-      updateTurnState();
+      startThreadTurn(state, threadId, info.details.turnId);
+      syncSelectedActivity();
+      renderThreads();
     }
     elements.messageInput.value = text;
     localStorage.setItem(draftKey(threadId), text);
@@ -967,6 +1048,15 @@ function handleEvent(event) {
 
   const threadId = eventThreadId(params);
   const turnId = eventTurnId(params);
+  if (!applyThreadSummaryEvent(state, event)) return;
+  if (["turn/started", "turn/completed", "thread/status/changed", "thread/name/updated", "thread/started"].includes(method)) {
+    renderThreads();
+    if (threadId === state.selected?.id) {
+      syncSelectedActivity();
+      elements.chatTitle.textContent = titleOf(state.selected);
+    }
+    if (method === "turn/completed") scheduleThreadSummarySync(threadId);
+  }
   if (method === "thread/settings/updated" && threadId) {
     const settings = params.threadSettings || {};
     updateSelectedSettings(threadId, settings.model, settings.effort);
@@ -1025,31 +1115,12 @@ function handleEvent(event) {
     }
     return;
   }
-  if (method === "turn/started" && threadId && turnId) {
-    state.activeTurns[threadId] = turnId;
-    if (threadId === state.selected?.id) {
-      state.activeTurnId = turnId;
-      state.busy = true;
-      updateTurnState();
-    }
-    renderThreads();
-  }
-  if (method === "thread/status/changed" && threadId === state.selected?.id) {
-    const type = params.status?.type || params.status;
-    if (type === "active") {
-      state.busy = true;
-      updateTurnState();
-    } else if (type === "idle" || type === "notLoaded") {
-      state.busy = false;
-      state.activeTurnId = null;
-      updateTurnState();
-    }
-  }
-  if (threadId && state.selected && threadId !== state.selected.id) return;
+  if (threadId && threadId !== state.selected?.id) return;
 
   if (method.includes("agentMessage") && method.endsWith("delta")) {
     const delta = textFrom(params.delta ?? params);
     if (!delta) return;
+    state.historyRevision = (state.historyRevision || 0) + 1;
     const itemId = params.itemId || `stream:${turnId || "current"}`;
     let entry = state.streaming.get(itemId);
     if (!entry) {
@@ -1065,7 +1136,7 @@ function handleEvent(event) {
   }
 
   if (method === "turn/completed") {
-    if (threadId) delete state.activeTurns[threadId];
+    state.historyRevision = (state.historyRevision || 0) + 1;
     state.activeTurnId = null;
     state.busy = false;
     state.streaming.clear();
@@ -1296,7 +1367,7 @@ async function createThread(event) {
     if (elements.newModelSelect.value) localStorage.setItem(MODEL_STORAGE_KEY, elements.newModelSelect.value);
     if (elements.newEffortSelect.value) localStorage.setItem(EFFORT_STORAGE_KEY, elements.newEffortSelect.value);
     if (state.threadClient !== "codex") switchThreadClient("codex", { reload: false });
-    state.threads = [thread, ...state.threads.filter((item) => item.id !== thread.id)];
+    state.threads = [{ ...thread, localDraft: true, localActivityAt: Date.now() }, ...state.threads.filter((item) => item.id !== thread.id)];
     closeNewThread();
     await selectThread(thread, { isNew: true });
   } catch (error) {
@@ -1344,8 +1415,9 @@ function renderConnectionDetails(snapshot) {
 async function refreshHealth({ show = false } = {}) {
   if (show) elements.connectionModal.classList.remove("hidden");
   try {
+    const since = summaryVersion(state);
     const snapshot = await api("/api/health", { timeoutMs: 8000 });
-    syncSnapshot(snapshot);
+    syncSnapshot(snapshot, since);
     setConnection(snapshot.appServer?.degraded ? "degraded" : "online", true);
     renderConnectionDetails(snapshot);
   } catch (error) {
@@ -1520,6 +1592,7 @@ setInterval(() => {
     void syncSelectedThread();
   }
 }, 15_000);
+setInterval(pollThreadSummaries, 10_000);
 void pwaController.start();
 
 const launchUrl = new URL(window.location.href);

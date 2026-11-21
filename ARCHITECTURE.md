@@ -36,6 +36,9 @@ Server remain local to the Windows host.
   exposed at `GET /api/pinned-threads` in section order. The browser loads pins
   independently of recent-history pages and deduplicates threads by ID. Explicit
   refreshes and foreground/reconnect reloads bypass the short-lived list cache.
+  While visible, the browser reconciles selected message history every ten seconds,
+  including during sidebar searches. Metadata reads cannot block history updates;
+  history snapshots cannot overwrite newer streamed text or local sends.
 - `src/event-hub.mjs` fans App Server notifications out over SSE, emits visible
   heartbeat events, and retains a bounded replay window with per-process
   instance identity for reconnecting phones.
@@ -50,6 +53,10 @@ Server remain local to the Windows host.
 - `public/app.js` orchestrates page behavior. `public/modules/` separates API
   transport, DOM references, state, protocol formatting, and message rendering;
   `public/styles.css` owns responsive presentation.
+- `public/modules/thread-summaries.js` reconciles per-thread metadata, activity,
+  terminal turns, and desktop pin order. Event revisions keep older HTTP reads
+  from overwriting newer UI state. A visible-page poll reconciles external updates
+  without discarding loaded pages; terminal events update every listed thread.
 - `public/modules/i18n.js` owns English and Simplified Chinese messages, browser
   language preference, and static-document translation.
 - `setup.ps1` discovers dependencies, selects non-conflicting ports, writes the
