@@ -163,6 +163,7 @@ export class ThreadService {
     this.logger = logger;
     this.archiveOperation = null;
     this.activeTurns = new Map();
+    this.completedTurns = new Set();
     this.loadedThreads = new Set();
     this.releasePromises = new Map();
     this.disconnectRecycleTimer = null;
@@ -182,6 +183,7 @@ export class ThreadService {
     client.on("state", (snapshot) => {
       if (!snapshot.ready) {
         this.activeTurns.clear();
+        this.completedTurns.clear();
         this.serverRequests.clear();
         this.loadedThreads.clear();
         this.modelCatalogCache = null;
@@ -755,11 +757,17 @@ export class ThreadService {
     const params = message.params || {};
     const threadId = threadIdFrom(params);
     const turnId = turnIdFrom(params);
-    if (message.method === "turn/started" && threadId && turnId) this.activeTurns.set(threadId, turnId);
+    if (message.method === "turn/started" && threadId && turnId && !this.completedTurns.has(turnId)) this.activeTurns.set(threadId, turnId);
     if (message.method === "turn/completed" && threadId) {
-      this.activeTurns.delete(threadId);
-      this.#resolveServerRequestsForThread(threadId);
-      void this.#releaseThread(threadId).finally(() => this.#drainQueue(threadId));
+      if (turnId) {
+        this.completedTurns.add(turnId);
+        if (this.completedTurns.size > 512) this.completedTurns.delete(this.completedTurns.values().next().value);
+      }
+      if (!turnId || !this.activeTurns.has(threadId) || this.activeTurns.get(threadId) === turnId) {
+        this.activeTurns.delete(threadId);
+        this.#resolveServerRequestsForThread(threadId);
+        void this.#releaseThread(threadId).finally(() => this.#drainQueue(threadId));
+      }
     }
     if (message.method === "thread/closed" && threadId) this.loadedThreads.delete(threadId);
     if (/^(thread\/|threadSection\/|turn\/)/.test(message.method)) this.#invalidateThreadList();
@@ -813,7 +821,7 @@ export class ThreadService {
       this.stateStore.removeDraft(threadId);
       this.#invalidateThreadList();
       const turnId = result?.turn?.id || null;
-      if (turnId) this.activeTurns.set(threadId, turnId);
+      if (turnId && !this.completedTurns.has(turnId) && !["completed", "failed", "interrupted"].includes(result.turn.status)) this.activeTurns.set(threadId, turnId);
       return { mode: "start", ...result };
     } catch (error) {
       if (resumed) void this.#releaseThread(threadId);

@@ -14,14 +14,20 @@ export function threadObject(result) {
 }
 
 export function titleOf(thread) {
-  return pick(thread, "name", "title", "preview") || t("threads.untitled");
+  return [thread?.name, thread?.title, thread?.preview, thread?.localTitle]
+    .find((value) => typeof value === "string" && value.trim()) || t("threads.untitled");
+}
+
+export function activityTime(thread) {
+  return Math.max(0, ...[thread?.localActivityAt, thread?.recencyAt, thread?.updatedAt, thread?.updated_at, thread?.createdAt, thread?.created_at]
+    .map((value) => typeof value === "number" ? (value < 1e12 ? value * 1000 : value) : Date.parse(value))
+    .filter(Number.isFinite));
 }
 
 export function dateOf(thread) {
-  const raw = pick(thread, "updatedAt", "updated_at", "createdAt", "created_at");
-  if (!raw) return "";
-  const date = new Date(typeof raw === "number" && raw < 1e12 ? raw * 1000 : raw);
-  if (Number.isNaN(date.valueOf())) return "";
+  const time = activityTime(thread);
+  if (!time) return "";
+  const date = new Date(time);
   const elapsed = Date.now() - date.valueOf();
   if (elapsed >= 0 && elapsed < 60_000) return t("date.now");
   if (elapsed >= 0 && elapsed < 3_600_000) return t("date.minutesAgo", { count: Math.floor(elapsed / 60_000) });

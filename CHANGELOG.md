@@ -4,6 +4,15 @@ All notable changes to Codex Mobile Bridge are documented here.
 
 ## Unreleased
 
+- Move recently active conversations up immediately and synchronize generated names
+  and previews with the sidebar and chat header without a page reload. Preserve
+  desktop pin order, loaded history pages, and unsent drafts during reconciliation.
+- Clear running indicators for background conversations and prevent stale metadata,
+  delayed start responses, and older completed turns from restoring obsolete activity.
+  Distinguish reported activity from confirmed ownership by another client.
+- Reconcile conversation summaries every ten seconds while the page is visible
+  outside active searches, with coalesced reads after sends and completed turns.
+
 - Show desktop-pinned conversations above recent history in desktop order, including
   older pins beyond the first history page. Deduplicate search and paginated results,
   and refresh desktop pin changes on manual refresh, reconnect, and foreground return.
