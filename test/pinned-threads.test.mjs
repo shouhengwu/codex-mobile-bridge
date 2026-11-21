@@ -6,7 +6,7 @@ import vm from "node:vm";
 import { ThreadService } from "../src/thread-service.mjs";
 import { EventHub } from "../src/event-hub.mjs";
 import { t } from "../public/modules/i18n.js";
-import { mergeThreadSummary, orderedThreads, summaryVersion } from "../public/modules/thread-summaries.js";
+import { isThreadUnread, mergeThreadSummary, orderedThreads, summaryVersion } from "../public/modules/thread-summaries.js";
 
 function serviceFixture() {
   class Client extends EventEmitter {
@@ -129,7 +129,7 @@ function browserFixture(api) {
     state, elements, api, URLSearchParams, THREAD_PAGE_SIZE: 30, document: { createElement: node },
     t, titleOf: (thread) => thread.name, dateOf: () => "date", isThreadActive: () => false,
     threadData: (result) => result?.data || [], hideBanner() {},
-    mergeThreadSummary, orderedThreads, summaryVersion, syncSelectedActivity() {},
+    isThreadUnread, mergeThreadSummary, orderedThreads, summaryVersion, syncSelectedActivity() {},
     showBanner: (message) => { throw new Error(message); }, errorInfo: (error) => ({ message: error.message }),
     selectThread: async (thread) => { state.selected = thread; }, listState: () => node(),
   });
@@ -223,6 +223,19 @@ test("an older list response cannot restore a completed status or stale title", 
   assert.equal(state.threads[0].name, "New");
   assert.equal(state.threads[0].status.type, "idle");
   assert.equal(state.activeTurns.A, undefined);
+});
+
+test("unread badges and running dots coexist and remain after passive list refresh", async () => {
+  const unreadThread = { id: "A", name: "Unread", readState: { firstUnread: { type: "threadStart" }, revision: "r1" } };
+  const { context, state, elements } = browserFixture(async (url) => url.startsWith("/api/pinned-threads?")
+    ? { data: [] } : { data: [unreadThread], nextCursor: null });
+  context.isThreadActive = () => true;
+  await context.loadThreads();
+  assert.match(elements.threadList.children[0].className, /\bunread\b/);
+  const indicators = elements.threadList.children[0].children[0].children.slice(1);
+  assert.deepEqual(indicators.map((item) => item.className), ["thread-unread", "thread-activity"]);
+  await context.loadThreads({ preserveLoaded: true, refresh: true });
+  assert.equal(state.threads[0].readState.firstUnread.type, "threadStart");
 });
 
 test("foreground return and reconnect reload both lists while preserving selection", async () => {

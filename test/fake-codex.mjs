@@ -6,6 +6,10 @@ const reader = readline.createInterface({ input: process.stdin });
 let draftId = 0;
 let turnId = 0;
 const threadSettings = new Map();
+const readStates = new Map();
+let receiptRevision = 0;
+const receipt = (id) => readStates.get(id) || { firstUnread: null, revision: `initial:${id}` };
+const receipts = (data) => Object.fromEntries(data.map((thread) => [thread.id, receipt(thread.id)]));
 const conflictThreads = new Set(String(process.env.FAKE_CODEX_CONFLICT_THREAD || "").split(",").filter(Boolean));
 
 function send(message) {
@@ -57,10 +61,10 @@ reader.on("line", (line) => {
         { id: "pinned-old", name: "Older pinned fixture", cwd: process.cwd(), section: { id: "section-pinned", name: "Pinned" }, updatedAt: 1 },
         { id: "thread-1", name: "Fixture thread", cwd: process.cwd(), section: { id: "section-pinned", name: "Pinned" }, updatedAt: 1_800_000_000 },
       ].filter((thread) => !params.searchTerm || thread.name.includes(params.searchTerm));
-      send({ id, result: { data, nextCursor: null } });
+      send({ id, result: { data, readStates: receipts(data), nextCursor: null } });
       return;
     }
-    send({ id, result: { data: [
+    const data = [
       { id: "thread-1", name: "Fixture thread", cwd: process.cwd(), model: "gpt-6-astra", reasoningEffort: "medium", updatedAt: 1_800_000_000, status: { type: "idle" } },
       { id: "thread-conflict", name: "Conflict fixture", cwd: process.cwd(), updatedAt: 1_799_999_998, status: { type: "idle" } },
       { id: "thread-active-conflict", name: "Active conflict fixture", cwd: process.cwd(), updatedAt: 1_799_999_997, status: { type: "active" } },
@@ -68,10 +72,20 @@ reader.on("line", (line) => {
       { id: "thread-notloaded-active-conflict", name: "Active not-loaded conflict fixture", cwd: process.cwd(), updatedAt: 1_799_999_995, status: { type: "notLoaded" }, path: join(import.meta.dirname, "fixtures", "rollout-active.jsonl") },
       { id: "thread-unknown-conflict", name: "Unknown conflict fixture", cwd: process.cwd(), updatedAt: 1_799_999_996, status: { type: "notLoaded" } },
       { id: "openclaw-1", preview: "Conversation info: ⟦openclaw:ctx⟧", cwd: "C:\\home\\fixture\\.openclaw\\workspace", updatedAt: 1_799_999_999, status: { type: "idle" } },
-    ], nextCursor: null } });
+    ];
+    send({ id, result: { data, readStates: receipts(data), nextCursor: null } });
+  } else if (method === "thread/readState/update") {
+    if (params.expectedRevision !== receipt(params.threadId).revision) {
+      send({ id, error: { code: -32600, message: "read state revision conflict" } });
+      return;
+    }
+    const readState = { firstUnread: params.operation.type === "unread" ? { type: "threadStart" } : null, revision: `receipt:${++receiptRevision}` };
+    readStates.set(params.threadId, readState);
+    send({ id, result: { readState } });
+    send({ method: "thread/readState/changed", params: { threadId: params.threadId, readState } });
   } else if (method === "thread/read") {
     const settings = threadSettings.get(params.threadId) || { model: "gpt-6-astra", effort: "medium" };
-    send({ id, result: { thread: { id: params.threadId, name: "Fixture thread", cwd: process.cwd(), model: settings.model, reasoningEffort: settings.effort, status: { type: "idle" }, turns: [] } } });
+    send({ id, result: { thread: { id: params.threadId, name: "Fixture thread", cwd: process.cwd(), model: settings.model, reasoningEffort: settings.effort, status: { type: "idle" }, turns: [] }, readState: receipt(params.threadId) } });
   } else if (method === "thread/turns/list") {
     if (!["notLoaded", "summary", "full"].includes(params.itemsView)) {
       send({ id, error: { code: -32602, message: "invalid thread/turns/list itemsView" } });

@@ -41,7 +41,9 @@ function filterThreadPage(result, client) {
   if (!collectionKey) return result;
   return {
     ...result,
-    [collectionKey]: result[collectionKey].filter((thread) => threadClient(thread) === client),
+    [collectionKey]: result[collectionKey]
+      .filter((thread) => threadClient(thread) === client)
+      .map((thread) => result.readStates?.[thread.id] ? { ...thread, readState: result.readStates[thread.id] } : thread),
   };
 }
 
@@ -398,9 +400,32 @@ export class ThreadService {
 
   async getThread(threadId) {
     try {
-      return await this.client.request("thread/read", { threadId, includeTurns: false });
+      const result = await this.client.request("thread/read", { threadId, includeTurns: false });
+      return result.readState && result.thread
+        ? { ...result, thread: { ...result.thread, readState: result.readState } } : result;
     } catch (error) {
       throw this.#threadReadFailure(threadId, error);
+    }
+  }
+
+  async updateReadState(threadId, { read, expectedRevision } = {}) {
+    if (typeof read !== "boolean" || typeof expectedRevision !== "string" || !expectedRevision || expectedRevision.length > 4096) {
+      throw new BridgeError("已读状态无效", { status: 400, code: "invalid_read_state" });
+    }
+    try {
+      const result = await this.client.request("thread/readState/update", {
+        threadId, expectedRevision, operation: { type: read ? "read" : "unread" },
+      });
+      this.#invalidateThreadList();
+      return result;
+    } catch (error) {
+      if (/revision|conflict/i.test(error?.message || "")) {
+        throw new BridgeError("会话已发生变化，请刷新后重新操作", { status: 409, code: "read_state_conflict" });
+      }
+      if (error?.code === -32601 || /read state.*(unavailable|unsupported)|durable.*unavailable/i.test(error?.message || "")) {
+        throw new BridgeError("此会话暂不支持已读标记", { status: 409, code: "read_state_unavailable" });
+      }
+      throw rpcFailure(error);
     }
   }
 

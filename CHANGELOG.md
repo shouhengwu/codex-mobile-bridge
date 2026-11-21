@@ -4,6 +4,11 @@ All notable changes to Codex Mobile Bridge are documented here.
 
 ## Unreleased
 
+- Add Mark as unread to the conversation action menu, with a distinct unread badge.
+  Store native Codex read receipts using revision checks so marks survive Bridge
+  restarts and are shared with desktop. Explicitly reopening a conversation marks
+  it read; background refreshes preserve manually marked unread conversations.
+
 - Move recently active conversations up immediately and synchronize generated names
   and previews with the sidebar and chat header without a page reload. Preserve
   desktop pin order, loaded history pages, and unsent drafts during reconciliation.

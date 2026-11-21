@@ -8,6 +8,10 @@ export function summaryVersion(state) {
   return state.threadSummaryVersion || 0;
 }
 
+export function isThreadUnread(thread) {
+  return Boolean(thread?.readState?.firstUnread);
+}
+
 export function mergeThreadSummary(state, summary, since = null) {
   const current = currentSummary(state, summary.id);
   // Responses started before a local event cannot restore an old title or status.
@@ -66,6 +70,8 @@ export function applyThreadSummaryEvent(state, event) {
   } else if (method === "thread/name/updated") {
     const name = params.threadName ?? params.name;
     if (typeof name === "string") patchThreadSummary(state, id, { name });
+  } else if (method === "thread/readState/changed" && params.readState) {
+    patchThreadSummary(state, id, { readState: params.readState });
   } else if (method === "thread/started" && params.thread) {
     patchThreadSummary(state, id, params.thread);
   }

@@ -17,6 +17,7 @@ import { EventStreamController } from "./modules/event-stream.js";
 import { state } from "./modules/state.js";
 import {
   applyThreadSummaryEvent,
+  isThreadUnread,
   mergeThreadSummary,
   noteThreadActivity,
   orderedThreads,
@@ -441,13 +442,19 @@ function renderThreads() {
   const threadButton = (thread) => {
     const button = document.createElement("button");
     button.type = "button";
-    button.className = `thread-item${state.selected?.id === thread.id ? " active" : ""}`;
+    button.className = `thread-item${state.selected?.id === thread.id ? " active" : ""}${isThreadUnread(thread) ? " unread" : ""}`;
     const line = document.createElement("span");
     line.className = "thread-line";
     const title = document.createElement("span");
     title.className = "thread-title";
     title.textContent = titleOf(thread);
     line.append(title);
+    if (isThreadUnread(thread)) {
+      const unread = document.createElement("span");
+      unread.className = "thread-unread";
+      unread.textContent = t("threads.unread");
+      line.append(unread);
+    }
     if (isThreadActive(thread)) {
       const activity = document.createElement("span");
       activity.className = "thread-activity";
@@ -628,6 +635,9 @@ async function selectThread(summary, { isNew = false, silent = false } = {}) {
     elements.chatMeta.textContent = state.selected.cwd || t("threads.noCwd");
     hideBanner();
     renderMessages();
+    if (!silent && !document.hidden && isThreadUnread(summary)) {
+      void updateThreadReadState(summary.id, true, summary.readState);
+    }
   } catch (error) {
     if (version !== state.selectionVersion) return;
     const info = errorInfo(error);
@@ -763,6 +773,39 @@ function updateArchiveActions() {
   const queued = threadId ? Number(state.queuedByThread[threadId] || 0) : 0;
   const disabled = !threadId || state.busy || state.submitting || state.connection === "degraded" || queued > 0;
   elements.drawerArchiveThreadButton.disabled = disabled;
+  elements.drawerMarkUnreadButton.disabled = !threadId || !state.selected?.readState?.revision
+    || state.readStatePending.has(threadId) || !state.ready || ["offline", "degraded"].includes(state.connection);
+}
+
+async function updateThreadReadState(threadId, read, readState, { manual = false } = {}) {
+  if (!readState?.revision || state.readStatePending.has(threadId)) return;
+  state.readStatePending.add(threadId);
+  updateArchiveActions();
+  try {
+    const result = await api(`/api/threads/${encodeURIComponent(threadId)}/read-state`, {
+      method: "PATCH", body: JSON.stringify({ read, expectedRevision: readState.revision }),
+    });
+    const latest = state.threads.find((thread) => thread.id === threadId) || (state.selected?.id === threadId ? state.selected : null);
+    if (!latest?.readState || [readState.revision, result.readState.revision].includes(latest.readState.revision)) {
+      patchThreadSummary(state, threadId, { readState: result.readState });
+    }
+    renderThreads();
+    if (manual) toast(t("toast.markedUnread"));
+  } catch (error) {
+    if (manual) showBanner(errorInfo(error).message);
+    // A conflict must wait for another explicit user action, never retry a mark.
+    scheduleThreadSummarySync(threadId);
+  } finally {
+    state.readStatePending.delete(threadId);
+    updateArchiveActions();
+  }
+}
+
+function markSelectedUnread() {
+  if (!state.selected || elements.drawerMarkUnreadButton.disabled) return;
+  const { id, readState } = state.selected;
+  closeActionDrawer({ restoreFocus: true });
+  void updateThreadReadState(id, false, readState, { manual: true });
 }
 
 function resizeComposer() {
@@ -995,7 +1038,7 @@ function handleEvent(event) {
   const threadId = eventThreadId(params);
   const turnId = eventTurnId(params);
   if (!applyThreadSummaryEvent(state, event)) return;
-  if (["turn/started", "turn/completed", "thread/status/changed", "thread/name/updated", "thread/started"].includes(method)) {
+  if (["turn/started", "turn/completed", "thread/status/changed", "thread/name/updated", "thread/readState/changed", "thread/started"].includes(method)) {
     renderThreads();
     if (threadId === state.selected?.id) {
       syncSelectedActivity();
@@ -1407,6 +1450,7 @@ elements.drawerRefreshButton.addEventListener("click", () => {
   void refreshAll();
 });
 elements.drawerArchiveThreadButton.addEventListener("click", archiveSelectedThread);
+elements.drawerMarkUnreadButton.addEventListener("click", markSelectedUnread);
 elements.drawerThemeButton.addEventListener("click", () => {
   toggleTheme();
   closeActionDrawer({ restoreFocus: true });
