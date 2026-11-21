@@ -6,7 +6,8 @@ import vm from "node:vm";
 import { ThreadService } from "../src/thread-service.mjs";
 import { EventHub } from "../src/event-hub.mjs";
 import { t } from "../public/modules/i18n.js";
-import { isThreadUnread, mergeThreadSummary, orderedThreads, summaryVersion } from "../public/modules/thread-summaries.js";
+import { statusType } from "../public/modules/formatters.js";
+import { applyThreadSummaryEvent, isThreadUnread, mergeThreadSummary, orderedThreads, summaryVersion } from "../public/modules/thread-summaries.js";
 
 function serviceFixture() {
   class Client extends EventEmitter {
@@ -127,12 +128,13 @@ function browserFixture(api) {
   const elements = Object.fromEntries(["threadCount", "threadSearch", "threadList", "loadMoreThreads", "chatTitle"].map((id) => [id, node()]));
   const context = vm.createContext({
     state, elements, api, URLSearchParams, THREAD_PAGE_SIZE: 30, document: { createElement: node },
-    t, titleOf: (thread) => thread.name, dateOf: () => "date", isThreadActive: () => false,
+    t, titleOf: (thread) => thread.name, dateOf: () => "date", statusType,
     threadData: (result) => result?.data || [], hideBanner() {},
     isThreadUnread, mergeThreadSummary, orderedThreads, summaryVersion, syncSelectedActivity() {},
     showBanner: (message) => { throw new Error(message); }, errorInfo: (error) => ({ message: error.message }),
     selectThread: async (thread) => { state.selected = thread; }, listState: () => node(),
   });
+  vm.runInContext(appSource.slice(appSource.indexOf("function isThreadActive("), appSource.indexOf("function setConnection(")), context);
   vm.runInContext(appSource.slice(appSource.indexOf("function renderThreads()"), appSource.indexOf("function renderThreadClientSwitch()")), context);
   return { context, state, elements };
 }
@@ -225,17 +227,26 @@ test("an older list response cannot restore a completed status or stale title", 
   assert.equal(state.activeTurns.A, undefined);
 });
 
-test("unread badges and running dots coexist and remain after passive list refresh", async () => {
-  const unreadThread = { id: "A", name: "Unread", readState: { firstUnread: { type: "threadStart" }, revision: "r1" } };
+test("running badges coexist with unread badges, survive refresh, and clear on completion", async () => {
+  const unreadThread = { id: "A", name: "Unread", status: { type: "active" }, readState: { firstUnread: { type: "threadStart" }, revision: "r1" } };
   const { context, state, elements } = browserFixture(async (url) => url.startsWith("/api/pinned-threads?")
     ? { data: [] } : { data: [unreadThread], nextCursor: null });
-  context.isThreadActive = () => true;
   await context.loadThreads();
   assert.match(elements.threadList.children[0].className, /\bunread\b/);
   const indicators = elements.threadList.children[0].children[0].children.slice(1);
   assert.deepEqual(indicators.map((item) => item.className), ["thread-unread", "thread-activity"]);
+  assert.deepEqual(indicators.map((item) => item.textContent), [t("threads.unread"), t("threads.running")]);
   await context.loadThreads({ preserveLoaded: true, refresh: true });
   assert.equal(state.threads[0].readState.firstUnread.type, "threadStart");
+  assert.equal(elements.threadList.children[0].children[0].children[2].textContent, t("threads.running"));
+
+  applyThreadSummaryEvent(state, { method: "turn/completed", params: { threadId: "A", turn: { id: "turn-A" } } });
+  context.renderThreads();
+  assert.deepEqual(elements.threadList.children[0].children[0].children.slice(1).map((item) => item.className), ["thread-unread"]);
+
+  state.activeTurns.A = "turn-B";
+  context.renderThreads();
+  assert.equal(elements.threadList.children[0].children[0].children[2].textContent, t("threads.running"));
 });
 
 test("foreground return and reconnect reload both lists while preserving selection", async () => {

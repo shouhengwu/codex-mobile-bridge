@@ -4,6 +4,10 @@ All notable changes to Codex Mobile Bridge are documented here.
 
 ## Unreleased
 
+- Show active conversations with a red Running badge beside the title, matching
+  the unread badge in both themes. Keep both badges visible when applicable and
+  clear the running badge when work finishes.
+
 - Add Mark as unread to the conversation action menu, with a distinct unread badge.
   Store native Codex read receipts using revision checks so marks survive Bridge
   restarts and are shared with desktop. Explicitly reopening a conversation marks

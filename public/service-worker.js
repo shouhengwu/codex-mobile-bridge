@@ -1,6 +1,6 @@
 const APP_VERSION = "0.9.2";
 const CACHE_PREFIX = "codex-bridge-shell-";
-const CACHE_NAME = `${CACHE_PREFIX}v${APP_VERSION}-unread-1`;
+const CACHE_NAME = `${CACHE_PREFIX}v${APP_VERSION}-running-badge-1`;
 const NAVIGATION_TIMEOUT_MS = 3_500;
 const SHELL = [
   "/",

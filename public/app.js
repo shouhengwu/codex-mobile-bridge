@@ -459,6 +459,7 @@ function renderThreads() {
       const activity = document.createElement("span");
       activity.className = "thread-activity";
       activity.title = t("threads.running");
+      activity.textContent = t("threads.running");
       line.append(activity);
     }
     const meta = document.createElement("span");

@@ -92,7 +92,7 @@ function browser(state = fixture(), additions = {}) {
   return { context, state, label };
 }
 
-test("actual event handler clears background green dots before filtering the selected chat", () => {
+test("actual event handler clears background running indicators before filtering the selected chat", () => {
   const { context, state } = browser();
   context.handleEvent({ method: "turn/started", params: { threadId: "newer", turn: { id: "A" } } });
   assert.equal(context.isThreadActive(state.threads[0]), true);
@@ -119,7 +119,7 @@ test("unknown activity does not assert external ownership, and completion stays 
   assert.equal(context.isThreadActive(state.selected), false);
 });
 
-test("a fast completed send updates the title and order without restoring a running dot", async () => {
+test("a fast completed send updates the title and order without restoring a running indicator", async () => {
   const state = fixture();
   state.selected.localDraft = true;
   const input = { value: "First message", focus() {} };
