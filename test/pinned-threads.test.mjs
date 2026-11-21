@@ -6,6 +6,7 @@ import vm from "node:vm";
 import { ThreadService } from "../src/thread-service.mjs";
 import { EventHub } from "../src/event-hub.mjs";
 import { t } from "../public/modules/i18n.js";
+import { mergeThreadSummary, orderedThreads, summaryVersion } from "../public/modules/thread-summaries.js";
 
 const PINNED_SECTION_ID = "01984de2-8f74-7c91-a3b2-5c5e937cf318";
 
@@ -124,12 +125,14 @@ function browserFixture(api) {
   const state = {
     threadClient: "codex", threads: [], pinnedThreadIds: [], threadsCursor: null,
     threadsLoading: false, threadsRequestVersion: 0, selected: { id: "selected" },
+    activeTurns: {},
   };
-  const elements = Object.fromEntries(["threadCount", "threadSearch", "threadList", "loadMoreThreads"].map((id) => [id, node()]));
+  const elements = Object.fromEntries(["threadCount", "threadSearch", "threadList", "loadMoreThreads", "chatTitle"].map((id) => [id, node()]));
   const context = vm.createContext({
     state, elements, api, URLSearchParams, THREAD_PAGE_SIZE: 30, document: { createElement: node },
     t, titleOf: (thread) => thread.name, dateOf: () => "date", isThreadActive: () => false,
     threadData: (result) => result?.data || [], hideBanner() {},
+    mergeThreadSummary, orderedThreads, summaryVersion, syncSelectedActivity() {},
     showBanner: (message) => { throw new Error(message); }, errorInfo: (error) => ({ message: error.message }),
     selectThread: async (thread) => { state.selected = thread; }, listState: () => node(),
   });
@@ -192,6 +195,37 @@ test("a new page can still show history while the older bridge awaits restart", 
   await context.loadThreads();
   assert.deepEqual(Array.from(state.threads, (thread) => thread.id), ["recent"]);
   assert.equal(state.pinnedThreadIds.length, 0);
+});
+
+test("summary polling preserves loaded pages, scroll position, drafts and pagination", async () => {
+  const { context, state, elements } = browserFixture(async (url) => url.startsWith("/api/pinned-threads?")
+    ? { data: [] } : { data: [{ id: "updated", name: "Updated" }], nextCursor: "first-page-cursor" });
+  state.threads = [{ id: "loaded-older", name: "Older" }, { id: "draft", name: null, localDraft: true }];
+  state.threadsCursor = "older-page-cursor";
+  elements.threadList.scrollTop = 600;
+  await context.loadThreads({ preserveLoaded: true, refresh: true });
+  assert.deepEqual(Array.from(state.threads, (thread) => thread.id), ["loaded-older", "draft", "updated"]);
+  assert.equal(state.threadsCursor, "older-page-cursor");
+  assert.equal(elements.threadList.scrollTop, 600);
+  await context.loadThreads({ refresh: true });
+  assert.equal(state.threads.some((thread) => thread.id === "draft"), true);
+  assert.equal(state.threadsCursor, "first-page-cursor");
+});
+
+test("an older list response cannot restore a completed status or stale title", async () => {
+  let finishList;
+  const { context, state } = browserFixture(async (url) => url.startsWith("/api/pinned-threads?")
+    ? { data: [] } : new Promise((resolve) => { finishList = resolve; }));
+  const { patchThreadSummary } = await import("../public/modules/thread-summaries.js");
+  state.threads = [{ id: "A", name: "Old", status: { type: "active" } }];
+  state.activeTurns.A = "turn";
+  const loading = context.loadThreads();
+  patchThreadSummary(state, "A", { name: "New", status: { type: "idle" } });
+  finishList({ data: [{ id: "A", name: "Old", status: { type: "active" } }], nextCursor: null });
+  await loading;
+  assert.equal(state.threads[0].name, "New");
+  assert.equal(state.threads[0].status.type, "idle");
+  assert.equal(state.activeTurns.A, undefined);
 });
 
 test("foreground return and reconnect reload both lists while preserving selection", async () => {

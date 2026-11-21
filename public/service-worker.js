@@ -1,6 +1,6 @@
 const APP_VERSION = "0.8.2";
 const CACHE_PREFIX = "codex-bridge-shell-";
-const CACHE_NAME = `${CACHE_PREFIX}v${APP_VERSION}-ui-v2`;
+const CACHE_NAME = `${CACHE_PREFIX}v${APP_VERSION}-ui-v2-summaries-2`;
 const NAVIGATION_TIMEOUT_MS = 3_500;
 const SHELL = [
   "/",
@@ -22,6 +22,7 @@ const SHELL = [
   "/ui/v2/modules/messages.js",
   "/ui/v2/modules/pwa.js",
   "/ui/v2/modules/state.js",
+  "/ui/v2/modules/thread-summaries.js",
   "/ui/v2/modules/theme-init.js",
 ];
 const SHELL_PATHS = new Set(SHELL);
