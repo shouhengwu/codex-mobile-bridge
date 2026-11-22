@@ -4,6 +4,9 @@ All notable changes to Codex Mobile Bridge are documented here.
 
 ## Unreleased
 
+- Add Pin conversation and Unpin conversation to the action menu in English and
+  Simplified Chinese, using the native desktop Pinned section ordering.
+
 - Keep cached page HTML and translation modules on the same installed shell version
   so updates do not expose untranslated action keys such as Mark as unread.
 
