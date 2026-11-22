@@ -4,6 +4,9 @@ All notable changes to Codex Mobile Bridge are documented here.
 
 ## Unreleased
 
+- Add Pin conversation and Unpin conversation to the action menu in English and
+  Simplified Chinese, using the native desktop Pinned section ordering.
+
 - Add a top-right jump-to-latest-question button when the latest submitted user
   message is partially or fully outside the conversation viewport.
 
