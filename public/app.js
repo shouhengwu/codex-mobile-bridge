@@ -97,7 +97,7 @@ function pollThreadSummaries() {
   if (state.selected) scheduleThreadSummarySync(state.selected.id);
 }
 
-const { emptyState, isNearBottom, renderMessages, renderEntryBody, scrollToBottom } = createMessageView({
+const { emptyState, isNearBottom, renderMessages, renderEntryBody, scrollToBottom, updateScrollControls, scrollToLatestQuestion } = createMessageView({
   elements,
   state,
   toast,
@@ -1473,7 +1473,10 @@ elements.threadSearch.addEventListener("input", () => {
 });
 elements.bannerClose.addEventListener("click", hideBanner);
 elements.bannerRetry.addEventListener("click", () => state.retryAction?.());
-elements.messages.addEventListener("scroll", () => elements.scrollBottom.classList.toggle("hidden", isNearBottom()));
+elements.messages.addEventListener("scroll", updateScrollControls);
+elements.scrollQuestion.addEventListener("click", scrollToLatestQuestion);
+new ResizeObserver(updateScrollControls).observe(elements.messages);
+new MutationObserver(updateScrollControls).observe(elements.messages, { childList: true, subtree: true, characterData: true });
 elements.scrollBottom.addEventListener("click", () => scrollToBottom());
 elements.messageInput.addEventListener("input", () => {
   resizeComposer();

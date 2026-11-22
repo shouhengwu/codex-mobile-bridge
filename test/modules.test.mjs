@@ -13,6 +13,39 @@ import { rpcFailure, ThreadService, threadClient } from "../src/thread-service.m
 import { BridgeStateStore } from "../src/state-store.mjs";
 import { isEligibleVsCodeOwner, ThreadTakeoverService } from "../src/thread-takeover.mjs";
 import { hasTranslation, setLanguage, t } from "../public/modules/i18n.js";
+import { createMessageView } from "../public/modules/messages.js";
+
+test("latest-question jump tracks full visibility and targets the latest submitted question", () => {
+  let bounds = { top: -40, bottom: 50 };
+  let hidden;
+  let scroll;
+  const question = { getBoundingClientRect: () => bounds };
+  const elements = {
+    messages: {
+      scrollTop: 300, scrollHeight: 1000, clientHeight: 400,
+      getBoundingClientRect: () => ({ top: 100, bottom: 500 }),
+      querySelectorAll: (selector) => {
+        assert.equal(selector, ".message.user:not(.queued)");
+        return [{ getBoundingClientRect: () => ({ top: -500, bottom: -400 }) }, question];
+      },
+      scrollTo: (options) => { scroll = options; },
+    },
+    scrollBottom: { classList: { toggle() {} } },
+    scrollQuestion: { classList: { toggle: (_, value) => { hidden = value; } } },
+  };
+  const view = createMessageView({ elements, state: {} });
+  for (const [top, bottom, expected] of [[110, 200, true], [90, 200, false], [450, 550, false], [-200, -100, false], [600, 700, false], [90, 700, false]]) {
+    bounds = { top, bottom };
+    view.updateScrollControls();
+    assert.equal(hidden, expected);
+  }
+  bounds = { top: -40, bottom: 50 };
+  view.scrollToLatestQuestion();
+  assert.equal(scroll.top, 148);
+  elements.messages.querySelectorAll = () => [];
+  view.updateScrollControls();
+  assert.equal(hidden, true);
+});
 import { markdownToHtml } from "../public/modules/markdown.js";
 
 test("event hub keeps a bounded replay window", () => {

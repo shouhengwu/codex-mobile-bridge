@@ -153,6 +153,30 @@ export function createMessageView({ elements, state, toast, onLoadOlder, onLoadD
     return elements.messages.scrollHeight - elements.messages.scrollTop - elements.messages.clientHeight < 100;
   }
 
+  function latestQuestion() {
+    return [...elements.messages.querySelectorAll(".message.user:not(.queued)")].at(-1);
+  }
+
+  function updateScrollControls() {
+    elements.scrollBottom.classList.toggle("hidden", isNearBottom());
+    const question = latestQuestion();
+    const viewport = elements.messages.getBoundingClientRect();
+    const bounds = question?.getBoundingClientRect();
+    elements.scrollQuestion.classList.toggle("hidden", !bounds
+      || (bounds.top >= viewport.top - 1 && bounds.bottom <= viewport.bottom + 1));
+  }
+
+  function scrollToLatestQuestion() {
+    const question = latestQuestion();
+    if (!question) return;
+    const viewport = elements.messages.getBoundingClientRect();
+    const bounds = question.getBoundingClientRect();
+    elements.messages.scrollTo({
+      top: elements.messages.scrollTop + bounds.top - viewport.top - 12,
+      behavior: globalThis.matchMedia?.("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",
+    });
+  }
+
   function scrollToBottom(smooth = true) {
     elements.messages.scrollTo({ top: elements.messages.scrollHeight, behavior: smooth ? "smooth" : "auto" });
     elements.scrollBottom.classList.add("hidden");
@@ -176,6 +200,7 @@ export function createMessageView({ elements, state, toast, onLoadOlder, onLoadD
     elements.messages.replaceChildren(...nodes);
     if (preserveTop) elements.messages.scrollTop = elements.messages.scrollHeight - previousHeight;
     else scrollToBottom(false);
+    updateScrollControls();
   }
 
   return {
@@ -183,6 +208,8 @@ export function createMessageView({ elements, state, toast, onLoadOlder, onLoadD
     isNearBottom,
     renderMessages,
     scrollToBottom,
+    updateScrollControls,
+    scrollToLatestQuestion,
     renderEntryBody: (container, entry) => renderRichText(container, entry.text, entry.role === "agent"),
   };
 }

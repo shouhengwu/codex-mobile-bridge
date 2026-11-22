@@ -1,6 +1,6 @@
 const APP_VERSION = "0.9.2";
 const CACHE_PREFIX = "codex-bridge-shell-";
-const CACHE_NAME = `${CACHE_PREFIX}v${APP_VERSION}-running-badge-1`;
+const CACHE_NAME = `${CACHE_PREFIX}v${APP_VERSION}-question-jump-1`;
 const NAVIGATION_TIMEOUT_MS = 3_500;
 const SHELL = [
   "/",
@@ -51,10 +51,11 @@ function timeoutAfter(milliseconds) {
 
 async function navigationResponse(event) {
   const cache = await caches.open(CACHE_NAME);
-  const network = fetch(event.request).then(async (response) => {
-    if (response.ok) await cache.put("/index.html", response.clone());
-    return response;
-  });
+  // Keep HTML and its cache-first modules on the same installed shell version.
+  // A newer worker installs the complete shell before replacing this version.
+  const installedPage = await cache.match("/index.html");
+  if (installedPage) return installedPage;
+  const network = fetch(event.request);
 
   try {
     return await Promise.race([network, timeoutAfter(NAVIGATION_TIMEOUT_MS)]);
