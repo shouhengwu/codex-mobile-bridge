@@ -4,6 +4,10 @@ All notable changes to Codex Mobile Bridge are documented here.
 
 ## Unreleased
 
+- Default new conversations to the last successfully associated project when it
+  still exists; creating a projectless conversation does not erase that preference.
+- Select native desktop projects by name when creating conversations, or choose
+  No project. Projectless conversations use the user home as their runtime directory.
 - Mark completed turns unread when the runtime does not supply an unread
   position, including while the phone is disconnected. Preserve newer receipts
   and acknowledge the loaded transcript revision when reopening a conversation.
