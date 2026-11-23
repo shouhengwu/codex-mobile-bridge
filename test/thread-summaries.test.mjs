@@ -6,7 +6,7 @@ import { EventEmitter } from "node:events";
 import { tmpdir } from "node:os";
 import { ThreadService } from "../src/thread-service.mjs";
 import { EventHub } from "../src/event-hub.mjs";
-import { activityTime, entriesFromTurns, eventThreadId, eventTurnId, latestTurnId, statusType, textFrom, threadObject, titleOf } from "../public/modules/formatters.js";
+import { activityTime, asyncQuestions, entriesFromTurns, eventThreadId, eventTurnId, latestTurnId, statusType, textFrom, threadObject, titleOf } from "../public/modules/formatters.js";
 import * as summaries from "../public/modules/thread-summaries.js";
 import { state as initialState } from "../public/modules/state.js";
 import { t } from "../public/modules/i18n.js";
@@ -76,7 +76,7 @@ test("older metadata and health reads cannot resurrect completed turns or overwr
 function browser(state = fixture(), additions = {}) {
   const label = { textContent: "" };
   const context = vm.createContext({
-    ...summaries, state, statusType, titleOf, threadObject, eventThreadId, eventTurnId, t,
+    ...summaries, state, statusType, titleOf, threadObject, eventThreadId, eventTurnId, asyncQuestions, t,
     Date, URLSearchParams, archivingThreadId: null,
     elements: { chatTitle: { textContent: "" }, turnState: { className: "", querySelector: () => label } },
     renderThreads() {}, updateComposer() {}, renderMessages() {}, scheduleThreadSummarySync() {},
@@ -165,6 +165,7 @@ test("foreground polling refreshes selected history independently of sidebar sea
     elements: { threadSearch: { value: "" } },
     loadThreads: (options) => calls.push(options), scheduleThreadSummarySync: (id) => summaries.push(id),
     syncSelectedThread: (options) => histories.push(options),
+    threadWaitingLabel: () => "",
   });
   vm.runInContext(app.slice(app.indexOf("function pollThreadSummaries("), app.indexOf("const { emptyState")), context);
   context.pollThreadSummaries();

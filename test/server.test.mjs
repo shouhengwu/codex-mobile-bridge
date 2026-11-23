@@ -189,6 +189,15 @@ test("bridge serves the UI and maps the Codex protocol", async (context) => {
   assert.equal(sync.resetRequired, false);
   assert.equal(sync.data[0].id, "turn-1");
 
+  for (const route of ["turns?limit=10", "sync?knownTurnId=turn-1"]) {
+    const inputHistory = await (await fetch(`${baseUrl}/api/threads/thread-input-history/${route}`)).json();
+    const question = inputHistory.data[0].items[0];
+    assert.equal(question.text, "");
+    assert.equal(question.delivery, "async");
+    assert.deepEqual(question.questions, [{ title: "Which environment?", options: ["Preview", "Production"] }]);
+  }
+  assert.deepEqual((await (await fetch(`${baseUrl}/api/health`)).json()).requests, []);
+
   const detailResponse = await fetch(`${baseUrl}/api/threads/thread-1/turns/turn-1/items/item-tool`, {
     headers: { "Accept-Encoding": "br, gzip" },
   });

@@ -75,6 +75,9 @@ Tailscale Serve, and prints the private HTTPS URL to open from your phone.
 - Render responses with Markdown, clickable links, tables, and code blocks.
 - Send messages, queue follow-ups without interrupting active work, stop turns
   explicitly, and handle supported approval and user-input requests.
+- Show asynchronous questions and options from desktop history and live messages,
+  including prompts with no message text. Option buttons add to your draft reply.
+  Pending Bridge-owned request cards are restored after reconnecting.
 - Persist mobile follow-ups locally and retry them automatically after another
   Codex client releases the conversation.
 - Explicitly take over a blocked conversation after confirmation. On Windows,

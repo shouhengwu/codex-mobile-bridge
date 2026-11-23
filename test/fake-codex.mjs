@@ -102,6 +102,10 @@ reader.on("line", (line) => {
         { id: "item-tool", type: "commandExecution", command: "fixture --verbose", status: "completed", aggregatedOutput: "detail ".repeat(800) },
       ],
     }];
+    if (params.threadId === "thread-input-history") data[0].items = [{
+      id: "item-question", type: "agentMessage", text: "", delivery: "async",
+      questions: [{ title: "Which environment?", options: ["Preview", "Production"] }],
+    }];
     send({
       id,
       result: {

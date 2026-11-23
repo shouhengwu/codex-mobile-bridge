@@ -1,6 +1,7 @@
 import { api, errorInfo } from "./modules/api.js";
 import { elements } from "./modules/elements.js";
 import {
+  asyncQuestions,
   dateOf,
   entriesFromTurns,
   eventThreadId,
@@ -98,7 +99,7 @@ function pollThreadSummaries() {
   if (state.selected) {
     scheduleThreadSummarySync(state.selected.id);
     // Keep live SSE text intact; metadata polling still detects a missed completion.
-    if (!state.historyLoading && !state.historySyncPromise && !(state.busy && state.streaming.size)) {
+    if (!state.historyLoading && !state.historySyncPromise && (!(state.busy && state.streaming.size) || threadWaitingLabel(state.selected))) {
       void syncSelectedThread({ background: true });
     }
   }
@@ -111,6 +112,7 @@ const { emptyState, isNearBottom, renderMessages, renderEntryBody, scrollToBotto
   onLoadOlder: () => loadOlderTurns(),
   onLoadDetail: (entry) => loadItemDetail(entry),
   onCancelQueued: (entry) => cancelQueuedMessage(entry),
+  onAnswerQuestion: (threadId, answer) => prepareQuestionAnswer(threadId, answer),
 });
 
 const pendingStreamRenders = new Map();
@@ -132,6 +134,15 @@ function isThreadActive(thread) {
   return Boolean(state.activeTurns[thread?.id]) || statusType(thread) === "active";
 }
 
+function threadWaitingLabel(thread) {
+  if (!thread) return "";
+  const requests = [...(state.requests?.values() || [])].filter((request) => request.threadId === thread.id);
+  const flags = statusType(thread) === "active" ? thread.status.activeFlags || [] : [];
+  if (flags.includes("waitingOnUserInput") || requests.some((request) => request.kind === "userInput")) return t("threads.needsInput");
+  if (flags.includes("waitingOnApproval") || requests.some((request) => request.kind === "approval")) return t("threads.needsApproval");
+  return "";
+}
+
 function setConnection(connection, ready = state.ready) {
   state.connection = connection;
   state.ready = ready;
@@ -146,7 +157,7 @@ function setConnection(connection, ready = state.ready) {
   updateComposer();
 }
 
-function syncSnapshot(snapshot, since = null) {
+function syncSnapshot(snapshot, since = null, requestsSince = null) {
   if (!snapshot) return;
   const previousInstanceId = state.snapshot?.eventStream?.instanceId;
   if (!hasStoredLanguage() && snapshot.uiLanguage && snapshot.uiLanguage !== language()) {
@@ -154,6 +165,11 @@ function syncSnapshot(snapshot, since = null) {
   }
   state.snapshot = snapshot;
   state.ready = Boolean(snapshot.ready);
+  if (Array.isArray(snapshot.requests) && (requestsSince === null || requestsSince === state.requestsRevision)) {
+    state.requests = new Map(snapshot.requests.map((request) => [request.requestId, request]));
+    state.requestsRevision += 1;
+    renderRequests();
+  }
   reconcileActiveTurns(state, snapshot.activeTurns || {}, since);
   state.queuedByThread = snapshot.drafts?.queuedByThread || {};
   elements.bridgeVersion.textContent = snapshot.version ? `v${snapshot.version}` : t("app.subtitle");
@@ -207,8 +223,9 @@ function upsertSelectedQueue(item) {
 }
 
 function updateTurnState(kind = null, label = null) {
-  const active = kind || (state.externalWriter ? "waiting" : state.busy ? (state.activeTurnId ? "running" : "waiting") : "idle");
-  const text = label || (state.externalWriter ? t("turn.heldElsewhere") : state.busy
+  const waiting = threadWaitingLabel(state.selected);
+  const active = kind || (waiting || state.externalWriter ? "waiting" : state.busy ? (state.activeTurnId ? "running" : "waiting") : "idle");
+  const text = label || waiting || (state.externalWriter ? t("turn.heldElsewhere") : state.busy
     ? t(state.activeTurnId ? "turn.running" : "turn.syncing") : t("turn.idle"));
   elements.turnState.className = `turn-state ${active}`;
   elements.turnState.querySelector("b").textContent = text;
@@ -464,11 +481,12 @@ function renderThreads() {
       unread.textContent = t("threads.unread");
       line.append(unread);
     }
-    if (isThreadActive(thread)) {
+    const waiting = threadWaitingLabel(thread);
+    if (waiting || isThreadActive(thread)) {
       const activity = document.createElement("span");
-      activity.className = "thread-activity";
-      activity.title = t("threads.running");
-      activity.textContent = t("threads.running");
+      activity.className = `thread-activity${waiting ? " waiting" : ""}`;
+      activity.title = waiting || t("threads.running");
+      activity.textContent = activity.title;
       line.append(activity);
     }
     const meta = document.createElement("span");
@@ -1082,11 +1100,13 @@ function handleEvent(event) {
     return;
   }
   if (method === "bridge/request") {
+    state.requestsRevision += 1;
     state.requests.set(params.requestId, params);
     renderRequests();
     return;
   }
   if (method === "bridge/requestResolved") {
+    state.requestsRevision += 1;
     state.requests.delete(params.requestId);
     renderRequests();
     return;
@@ -1163,6 +1183,28 @@ function handleEvent(event) {
   }
   if (threadId && threadId !== state.selected?.id) return;
 
+  if (["item/started", "item/completed"].includes(method) && params.item?.type === "agentMessage") {
+    const questions = asyncQuestions(params.item);
+    if (questions.length) {
+      state.historyRevision = (state.historyRevision || 0) + 1;
+      const itemId = params.item.id;
+      let entry = state.historyItems.find((item) => item.id === itemId);
+      if (!entry) {
+        entry = { id: itemId, turnId, role: "agent", text: "", type: "agentMessage", pending: false };
+        state.historyItems.push(entry);
+      }
+      entry.text = params.item.text || entry.text;
+      entry.questions = questions;
+      entry.pending = method !== "item/completed";
+      if (entry.pending) state.streaming.set(itemId, entry);
+      else state.streaming.delete(itemId);
+      const nearBottom = isNearBottom();
+      const previousTop = elements.messages.scrollTop;
+      renderMessages();
+      if (!nearBottom) elements.messages.scrollTop = previousTop;
+    }
+  }
+
   if (method.includes("agentMessage") && method.endsWith("delta")) {
     const delta = textFrom(params.delta ?? params);
     if (!delta) return;
@@ -1170,9 +1212,13 @@ function handleEvent(event) {
     const itemId = params.itemId || `stream:${turnId || "current"}`;
     let entry = state.streaming.get(itemId);
     if (!entry) {
-      entry = { id: itemId, turnId, role: "agent", text: "", type: "agentMessage", pending: true };
+      entry = state.historyItems.find((item) => item.id === itemId);
+      if (!entry) {
+        entry = { id: itemId, turnId, role: "agent", text: "", type: "agentMessage", pending: true };
+        state.historyItems.push(entry);
+      }
+      entry.pending = true;
       state.streaming.set(itemId, entry);
-      state.historyItems.push(entry);
       renderMessages();
     }
     entry.text += delta;
@@ -1201,12 +1247,33 @@ function handleEvent(event) {
 
 function renderRequests() {
   const visible = [...state.requests.values()].filter((request) => !request.threadId || request.threadId === state.selected?.id);
-  elements.requests.replaceChildren(...visible.map(requestCard));
+  const children = [...elements.requests.children];
+  const existing = new Map(children.map((card) => [card.dataset.requestId, card]));
+  const cards = visible.map((request) => {
+    const card = existing.get(request.requestId);
+    return card?.requestContent === JSON.stringify(request) ? card : requestCard(request);
+  });
+  if (cards.length !== children.length || cards.some((card, index) => card !== children[index])) elements.requests.replaceChildren(...cards);
+  renderThreads();
+  updateTurnState();
+}
+
+async function refreshRequests() {
+  const revision = state.requestsRevision;
+  try {
+    const result = await api("/api/requests");
+    if (state.requestsRevision !== revision) return;
+    state.requests = new Map((result.data || []).map((request) => [request.requestId, request]));
+    state.requestsRevision += 1;
+    renderRequests();
+  } catch {}
 }
 
 function requestCard(request) {
   const card = document.createElement("section");
   card.className = "request-card";
+  card.dataset.requestId = request.requestId;
+  card.requestContent = JSON.stringify(request);
   const title = document.createElement("h3");
   title.textContent = request.kind === "approval" ? t("request.approval") : request.kind === "userInput" ? t("request.userInput") : t("request.pending");
   card.append(title);
@@ -1307,11 +1374,22 @@ async function respondRequest(requestId, body) {
   try {
     await api(`/api/requests/${encodeURIComponent(requestId)}`, { method: "POST", body: JSON.stringify(body) });
     state.requests.delete(requestId);
+    state.requestsRevision += 1;
     renderRequests();
     toast(t("toast.submitted"));
   } catch (error) {
     showBanner(errorInfo(error).message);
   }
+}
+
+function prepareQuestionAnswer(threadId, answer) {
+  if (threadId !== state.selected?.id || elements.messageInput.disabled) return;
+  const previous = elements.messageInput.value.trimEnd();
+  elements.messageInput.value = previous ? `${previous}\n${answer}` : answer;
+  localStorage.setItem(draftKey(threadId), elements.messageInput.value);
+  resizeComposer();
+  updateComposer();
+  elements.messageInput.focus();
 }
 
 function workspaceOptionsOpen() {
@@ -1469,8 +1547,9 @@ async function refreshHealth({ show = false } = {}) {
   if (show) elements.connectionModal.classList.remove("hidden");
   try {
     const since = summaryVersion(state);
+    const requestsSince = state.requestsRevision;
     const snapshot = await api("/api/health", { timeoutMs: 8000 });
-    syncSnapshot(snapshot, since);
+    syncSnapshot(snapshot, since, requestsSince);
     setConnection(snapshot.appServer?.degraded ? "degraded" : "online", true);
     renderConnectionDetails(snapshot);
   } catch (error) {
@@ -1662,8 +1741,5 @@ Promise.all([
   refreshHealth(),
   loadModels(),
   loadThreads({ preserveSelection: false }),
-  api("/api/requests").then((result) => {
-    for (const request of result.data || []) state.requests.set(request.requestId, request);
-    renderRequests();
-  }).catch(() => {}),
+  refreshRequests(),
 ]);
