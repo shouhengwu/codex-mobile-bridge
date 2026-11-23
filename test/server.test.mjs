@@ -127,8 +127,8 @@ test("bridge serves the UI and maps the Codex protocol", async (context) => {
   assert.ok(manifest.icons.some((icon) => icon.purpose === "maskable"));
 
   const models = await (await fetch(`${baseUrl}/api/models`)).json();
-  assert.equal(models.data[0].model, "gpt-6-astra");
-  assert.deepEqual(models.data[0].supportedReasoningEfforts.map((option) => option.reasoningEffort), ["low", "medium", "high"]);
+  assert.deepEqual(models.data.map((model) => model.model), ["gpt-6-astra"], "only models returned by this App Server are offered");
+  assert.deepEqual(models.data.find((model) => model.model === "gpt-6-astra").supportedReasoningEfforts.map((option) => option.reasoningEffort), ["low", "medium", "high"]);
 
   const list = await (await fetch(`${baseUrl}/api/threads`)).json();
   assert.equal(list.data[0].id, "thread-1");

@@ -473,6 +473,69 @@ test("assistant Markdown renders skill citations as compact traceable cards", ()
   assert.match(unsafe, /&lt;img src=x onerror=alert\(1\)&gt;/);
 });
 
+test("model catalogs offer only native models and order available 6.2 models without overriding metadata", async () => {
+  const legacy = { id: "gpt-6.1-terra", model: "gpt-6.1-terra", isDefault: true };
+  const other = { id: "gpt-6.1-sol", model: "gpt-6.1-sol" };
+  let data = [legacy, other];
+  let calls = 0;
+  const client = new EventEmitter();
+  client.snapshot = () => ({ ready: false });
+  client.request = async (method, params) => {
+    calls++;
+    assert.equal(method, "model/list");
+    assert.deepEqual(params, { limit: 100 });
+    return { data };
+  };
+  const service = new ThreadService({ client, eventHub: new EventHub(), stateStore: { snapshot: () => ({}) } });
+  const initial = await service.models();
+  assert.deepEqual(initial.data, [legacy, other], "an older runtime must not gain fabricated 6.2 models");
+  assert.deepEqual(data, [legacy, other], "reading does not mutate the upstream catalog");
+  assert.deepEqual(initial.data.filter((model) => model.isDefault), [legacy]);
+  assert.equal(await service.models(), initial);
+  assert.equal(calls, 1, "the native catalog remains cached");
+
+  const astra = { id: "upstream-astra", model: "gpt-6.2-astra", displayName: "Native Astra", isDefault: true,
+    defaultReasoningEffort: "high", supportedReasoningEfforts: [{ reasoningEffort: "high" }] };
+  const sol = { id: "gpt-6.2-sol", hidden: true };
+  data = [legacy, sol, other, astra];
+  client.emit("state", { ready: false });
+  assert.deepEqual((await service.models()).data, [astra, sol, legacy, other], "native entries keep their metadata while 6.2 Astra and Sol move first");
+  assert.deepEqual(data, [legacy, sol, other, astra], "sorting does not mutate the upstream catalog");
+  data = [];
+  client.emit("state", { ready: false });
+  assert.deepEqual((await service.models()).data, [], "an empty catalog must stay empty");
+  client.emit("state", { ready: false });
+  client.request = async () => { throw Object.assign(new Error("Unavailable"), { code: -32001 }); };
+  await assert.rejects(service.models(), { code: "codex_overloaded" });
+});
+
+test("6.2 model selections reach new conversations, settings and turns unchanged", async (context) => {
+  const directory = await mkdtemp(join(tmpdir(), "bridge-model-selection-"));
+  context.after(() => rm(directory, { recursive: true, force: true }));
+  const client = new EventEmitter();
+  const calls = [];
+  client.request = async (method, params) => {
+    calls.push({ method, params });
+    if (method === "thread/start") return { thread: { id: params.model } };
+    if (method === "turn/start") return { turn: { id: `turn-${params.model}`, status: "completed" } };
+    assert.equal(method, "thread/settings/update");
+    return {};
+  };
+  const service = new ThreadService({ client, eventHub: new EventHub(), stateStore: new BridgeStateStore(join(directory, "state.json")) });
+  for (const model of ["gpt-6.2-astra", "gpt-6.2-sol"]) {
+    const { thread } = await service.createThread({ cwd: directory, model, effort: "low" });
+    assert.equal(thread.model, model);
+    assert.equal(calls.at(-2).params.model, model);
+    assert.equal(calls.at(-1).params.effort, "low");
+    await service.updateSettings(thread.id, { model, effort: "ultra" });
+    assert.deepEqual(calls.at(-1), { method: "thread/settings/update", params: { threadId: thread.id, model, effort: "ultra" } });
+    await service.send(thread.id, { text: "Fixture prompt", model, effort: "ultra" });
+    assert.equal(calls.at(-1).method, "turn/start");
+    assert.equal(calls.at(-1).params.model, model);
+    assert.equal(calls.at(-1).params.effort, "ultra");
+  }
+});
+
 test("every referenced UI message exists in both languages", async () => {
   const sources = await Promise.all([
     "../public/app.js",

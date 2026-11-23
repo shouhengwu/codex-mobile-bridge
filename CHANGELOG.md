@@ -4,6 +4,12 @@ All notable changes to Codex Mobile Bridge are documented here.
 
 ## Unreleased
 
+- Support GPT-6.2-Astra and GPT-6.2-Sol when offered by the active Codex runtime,
+  preserving its reasoning levels and defaults. List 6.2 Astra before 6.2 Sol,
+  above older models, and refresh the catalog when opening model settings.
+  Mark saved models missing from the runtime catalog as unavailable instead of
+  inventing selectable entries for an incompatible CLI or account.
+
 - Default new conversations to the last successfully associated project when it
   still exists; creating a projectless conversation does not erase that preference.
 

@@ -2,9 +2,11 @@ import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import vm from "node:vm";
 import { EventHub } from "../src/event-hub.mjs";
 import { compactTurnPage, deltaFromTurnPage, findThreadItem } from "../src/mobile-history.mjs";
 import { EventStreamController, eventStreamUrl, reconnectDelay } from "../public/modules/event-stream.js";
+import { ThreadService } from "../src/thread-service.mjs";
 
 test("mobile history keeps messages and summarizes tool output", () => {
   const page = compactTurnPage({ data: [{ id: "turn-2", items: [
@@ -127,6 +129,63 @@ test("model and reasoning selectors use the live catalog and persist queued turn
   assert.match(service, /client\.request\("thread\/settings\/update"/);
   assert.match(service, /model: item\.model \|\| null/);
   assert.match(service, /effort: item\.effort \|\| null/);
+});
+
+test("both model pickers expose 6.2 models and refresh an already loaded settings catalog", async () => {
+  const client = new EventEmitter();
+  const legacy = { id: "gpt-6.1-terra", model: "gpt-6.1-terra", isDefault: true };
+  const nativeModel = (model, displayName) => ({
+    id: model, model, displayName, defaultReasoningEffort: "low",
+    supportedReasoningEfforts: ["low", "medium", "high", "xhigh", "max", "ultra"].map((reasoningEffort) => ({ reasoningEffort })),
+  });
+  client.request = async () => ({ data: [legacy, nativeModel("gpt-6.2-sol", "GPT-6.2-Sol"), nativeModel("gpt-6.2-astra", "GPT-6.2-Astra")] });
+  const service = new ThreadService({ client, eventHub: new EventHub(), stateStore: {} });
+  const models = (await service.models()).data;
+  const node = () => ({
+    value: "", children: [], classList: { remove() {} }, setAttribute() {}, focus() {},
+    replaceChildren(...children) { this.children = children; this.value = children[0]?.value || ""; },
+  });
+  const elements = Object.fromEntries([
+    "modelSelect", "effortSelect", "modelSettingsButton", "modelSettingsSummary", "modelSettingsModal",
+    "closeModelSettings", "newModelSelect", "newEffortSelect",
+  ].map((id) => [id, node()]));
+  const stored = new Map([["model", "gpt-6.2-sol"], ["effort", "max"]]);
+  const state = { models, modelsLoading: false, settingsSaving: false,
+    selected: { id: "thread", model: "gpt-6.2-astra", reasoningEffort: "ultra" } };
+  let requests = 0;
+  const context = vm.createContext({
+    state, elements, document: { createElement: node }, localStorage: { getItem: (key) => stored.get(key) },
+    MODEL_STORAGE_KEY: "model", EFFORT_STORAGE_KEY: "effort", t: (key) => key,
+    api: async (url) => { assert.equal(url, "/api/models"); requests++; return { data: models }; },
+  });
+  const source = await readFile(new URL("../public/app.js", import.meta.url), "utf8");
+  vm.runInContext(source.slice(source.indexOf("function modelValue("), source.indexOf("function updateSelectedSettings(")), context);
+  vm.runInContext(source.slice(source.indexOf("function openModelSettings("), source.indexOf("function closeModelSettings(")), context);
+  context.renderModelControls();
+  context.renderNewModelControls();
+  for (const select of [elements.modelSelect, elements.newModelSelect]) {
+    assert.deepEqual(select.children.map((option) => option.value), ["gpt-6.2-astra", "gpt-6.2-sol", "gpt-6.1-terra"]);
+    assert.ok(select.children.some((option) => option.value === "gpt-6.2-astra" && option.textContent === "GPT-6.2-Astra"));
+    assert.ok(select.children.some((option) => option.value === "gpt-6.2-sol" && option.textContent === "GPT-6.2-Sol"));
+    assert.equal(select.disabled, false);
+  }
+  assert.equal(elements.modelSelect.value, "gpt-6.2-astra");
+  assert.equal(elements.effortSelect.value, "ultra");
+  assert.equal(elements.newModelSelect.value, "gpt-6.2-sol");
+  assert.equal(elements.newEffortSelect.value, "max");
+  assert.deepEqual(elements.newEffortSelect.children.map((option) => option.value), ["low", "medium", "high", "xhigh", "max", "ultra"]);
+  context.openModelSettings();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(requests, 1, "opening settings refreshes a nonempty catalog");
+  assert.equal(elements.modelSelect.value, "gpt-6.2-astra");
+  assert.equal(elements.newModelSelect.value, "gpt-6.2-sol");
+  state.models = [legacy];
+  context.renderModelControls();
+  context.renderNewModelControls();
+  const unavailableSelection = elements.modelSelect.children.find((option) => option.value === "gpt-6.2-astra");
+  assert.equal(unavailableSelection.disabled, true, "a saved unsupported model is shown only as an unavailable selection");
+  assert.equal(elements.effortSelect.disabled, true);
+  assert.deepEqual(elements.newModelSelect.children.map((option) => option.value), ["gpt-6.1-terra"]);
 });
 
 test("mobile actions use a topbar drawer instead of consuming conversation-list space", async () => {
