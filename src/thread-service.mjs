@@ -14,6 +14,8 @@ const THREAD_CLIENTS = new Set(["codex", "openclaw"]);
 const PINNED_THREAD_SECTION_ID = "01984de2-8f74-7c91-a3b2-5c5e937cf318";
 const MAX_TAKEOVER_ROLLOUT_TAIL_BYTES = 4 * 1024 * 1024;
 const MODEL_CATALOG_TTL_MS = 60_000;
+// Model availability and reasoning levels must come from the active runtime.
+const MODEL_CATALOG_PRIORITY = new Map([["gpt-6.2-astra", 0], ["gpt-6.2-sol", 1]]);
 const OPENCLAW_PREVIEW_MARKERS = [
   /(?:^|\n)Conversation info:\s*⟦openclaw:ctx⟧/i,
   /(?:^|\n)OpenClaw runtime context for this turn:/i,
@@ -316,7 +318,9 @@ export class ThreadService {
     if (this.modelCatalogCache?.expiresAt > Date.now()) return this.modelCatalogCache.value;
     try {
       const result = await this.client.request("model/list", { limit: 100 });
-      const value = { data: Array.isArray(result?.data) ? result.data : [] };
+      const data = Array.isArray(result?.data) ? result.data : [];
+      const rank = (model) => MODEL_CATALOG_PRIORITY.get(model.model) ?? MODEL_CATALOG_PRIORITY.get(model.id) ?? MODEL_CATALOG_PRIORITY.size;
+      const value = { data: [...data].sort((left, right) => rank(left) - rank(right)) };
       this.modelCatalogCache = { value, expiresAt: Date.now() + MODEL_CATALOG_TTL_MS };
       return value;
     } catch (error) {

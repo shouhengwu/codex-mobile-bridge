@@ -264,6 +264,7 @@ function fillSelect(select, options, value, emptyLabel) {
     const option = document.createElement("option");
     option.value = item.value;
     option.textContent = item.label;
+    option.disabled = Boolean(item.disabled);
     if (item.description) option.title = item.description;
     return option;
   }));
@@ -285,7 +286,7 @@ function renderModelControls() {
     description: model.description || "",
   }));
   if (selectedValue && !catalogOptions.some((option) => option.value === selectedValue)) {
-    catalogOptions.push({ value: selectedValue, label: selectedValue, description: "" });
+    catalogOptions.push({ value: selectedValue, label: t("model.unavailableSelection", { model: selectedValue }), disabled: true });
   }
   fillSelect(elements.modelSelect, catalogOptions, selectedValue, t(state.modelsLoading ? "model.loading" : "model.unavailable"));
   const model = modelByValue(elements.modelSelect.value);
@@ -297,7 +298,7 @@ function renderModelControls() {
   fillSelect(elements.effortSelect, efforts, selectedEffort, t(state.modelsLoading ? "model.loading" : "model.unavailable"));
   const disabled = !state.selected || state.modelsLoading || !state.models.length || state.settingsSaving;
   elements.modelSelect.disabled = disabled;
-  elements.effortSelect.disabled = disabled || !efforts.length;
+  elements.effortSelect.disabled = disabled || !model || !efforts.length;
   elements.modelSettingsButton.disabled = !state.selected;
   const modelLabel = catalogOptions.find((option) => option.value === elements.modelSelect.value)?.label || t("model.settings");
   const effort = elements.effortSelect.value ? effortLabel(elements.effortSelect.value) : "";
@@ -396,7 +397,7 @@ function openModelSettings() {
   if (elements.modelSettingsButton.disabled) return;
   elements.modelSettingsModal.classList.remove("hidden");
   elements.modelSettingsButton.setAttribute("aria-expanded", "true");
-  if (!state.models.length) void loadModels();
+  void loadModels();
   if (elements.modelSelect.disabled) elements.closeModelSettings.focus();
   else elements.modelSelect.focus();
 }

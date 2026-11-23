@@ -148,7 +148,9 @@ bounded to 100 entries with a seven-day expiry.
 ## HTTP contract
 
 - Successful endpoints return the matching App Server result.
-- `/api/models` reflects the active App Server model catalog. Model changes use
+- `/api/models` reflects only the active App Server model catalog. Available
+  GPT-6.2-Astra and GPT-6.2-Sol entries are sorted first in that order, preserving
+  upstream metadata, supported reasoning levels, and defaults. Model changes use
   `thread/settings/update`, and each `turn/start` repeats the selected model and
   effort so delayed queue delivery cannot silently inherit a newer selection.
 - Errors use `{ "error": { "code", "message", "retryable", "details"? } }`.
