@@ -67,13 +67,15 @@ export function entriesFromTurns(result) {
   for (const turn of turns) {
     for (const [index, item] of (turn.items || []).entries()) {
       const text = textFrom(item);
-      if (!text) continue;
+      const questions = asyncQuestions(item);
+      if (!text && !questions.length) continue;
       entries.push({
         id: item.id || `${turn.id || "turn"}:${index}:${String(item.type || "item")}`,
         turnId: turn.id || null,
         role: roleOf(item),
         text,
         type: item.type || item.kind || "event",
+        ...(questions.length ? { questions } : {}),
         compact: item.compact === true,
         detailAvailable: item.detailAvailable === true,
         pending: false,
@@ -81,6 +83,14 @@ export function entriesFromTurns(result) {
     }
   }
   return entries;
+}
+
+export function asyncQuestions(item) {
+  if (item?.type !== "agentMessage" || !Array.isArray(item.questions)) return [];
+  return item.questions.filter((question) => typeof question?.title === "string" && question.title.trim()).map((question) => ({
+    title: question.title,
+    options: Array.isArray(question.options) ? question.options.filter((option) => typeof option === "string") : [],
+  }));
 }
 
 export function latestTurnId(result) {

@@ -4,6 +4,12 @@ All notable changes to Codex Mobile Bridge are documented here.
 
 ## Unreleased
 
+- Show native asynchronous user-input questions and options in conversation
+  history and live messages, including question-only messages. Option buttons
+  prepare a reply without sending it. Show Needs input / Needs approval for native
+  waiting states, restore pending request cards after reconnects, and clear
+  requests resolved by the App Server without discarding unfinished answers.
+
 - Support GPT-6.2-Astra and GPT-6.2-Sol when offered by the active Codex runtime,
   preserving its reasoning levels and defaults. List 6.2 Astra before 6.2 Sol,
   above older models, and refresh the catalog when opening model settings.

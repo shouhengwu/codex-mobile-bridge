@@ -39,6 +39,12 @@ Server remain local to the Windows host.
   While visible, the browser reconciles selected message history every ten seconds,
   including during sidebar searches. Metadata reads cannot block history updates;
   history snapshots cannot overwrite newer streamed text or local sends.
+  Native asynchronous questions on `agentMessage.questions` remain visible in
+  compact history and live item notifications, even without message text. Their
+  option buttons populate the ordinary composer. Blocking JSON-RPC requests
+  remain separate: snapshots reconcile pending cards after reconnects, and
+  `serverRequest/resolved` removes expired cards. Request replies belong to the
+  App Server that emitted them; reading desktop history does not acquire its writer.
 - `src/event-hub.mjs` fans App Server notifications out over SSE, emits visible
   heartbeat events, and retains a bounded replay window with per-process
   instance identity for reconnecting phones.

@@ -1,7 +1,7 @@
 import { t } from "./i18n.js";
 import { markdownToHtml } from "./markdown.js";
 
-export function createMessageView({ elements, state, toast, onLoadOlder, onLoadDetail, onCancelQueued }) {
+export function createMessageView({ elements, state, toast, onLoadOlder, onLoadDetail, onCancelQueued, onAnswerQuestion }) {
   function emptyState(title, detail, symbol = "⌁") {
     const node = document.createElement("div");
     node.className = "empty-state";
@@ -144,9 +144,43 @@ export function createMessageView({ elements, state, toast, onLoadOlder, onLoadD
     head.append(copy);
     const body = document.createElement("div");
     body.className = "message-body";
-    renderRichText(body, entry.text, entry.role === "agent");
+    renderEntryBody(body, entry);
     box.append(head, body);
     return box;
+  }
+
+  function renderEntryBody(container, entry) {
+    renderRichText(container, entry.text, entry.role === "agent");
+    if (!entry.questions?.length) return;
+    const threadId = state.selected?.id;
+    const questions = document.createElement("section");
+    questions.className = "async-questions request-card";
+    const title = document.createElement("h3");
+    title.textContent = t("request.userInput");
+    questions.append(title);
+    for (const question of entry.questions) {
+      const field = document.createElement("div");
+      field.className = "request-question";
+      const prompt = document.createElement("p");
+      prompt.textContent = question.title;
+      field.append(prompt);
+      const options = document.createElement("div");
+      options.className = "request-actions";
+      for (const option of question.options || []) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.textContent = option;
+        button.addEventListener("click", () => onAnswerQuestion?.(threadId,
+          entry.questions.length > 1 ? `${question.title}\n${option}` : option));
+        options.append(button);
+      }
+      field.append(options);
+      questions.append(field);
+    }
+    const help = document.createElement("small");
+    help.textContent = t("request.replyBelow");
+    questions.append(help);
+    container.append(questions);
   }
 
   function isNearBottom() {
@@ -183,6 +217,6 @@ export function createMessageView({ elements, state, toast, onLoadOlder, onLoadD
     isNearBottom,
     renderMessages,
     scrollToBottom,
-    renderEntryBody: (container, entry) => renderRichText(container, entry.text, entry.role === "agent"),
+    renderEntryBody,
   };
 }

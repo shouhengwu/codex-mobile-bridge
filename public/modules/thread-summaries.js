@@ -83,8 +83,10 @@ export function reconcileActiveTurns(state, incoming, since = null) {
     if (since !== null && (state.threadSummaryRevisions?.get(id) || 0) > since) continue;
     const turnId = incoming[id];
     if (turnId && !state.completedTurns?.has(turnId)) {
+      const current = currentSummary(state, id);
+      const status = state.activeTurns[id] === turnId && statusType(current) === "active" ? current.status : { type: "active" };
       state.activeTurns[id] = turnId;
-      mergeThreadSummary(state, { id, status: { type: "active" } });
+      mergeThreadSummary(state, { id, status });
     } else {
       delete state.activeTurns[id];
       mergeThreadSummary(state, { id, status: { type: "idle" } });

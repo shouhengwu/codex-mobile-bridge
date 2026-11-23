@@ -213,6 +213,7 @@ export class ThreadService {
         disconnectRecyclePending: Boolean(this.disconnectRecycleTimer || this.recyclePromise),
       },
       pendingRequests: this.serverRequests.size,
+      requests: this.pendingRequests().data,
       queueDrains: this.queueDrains.size,
       permissions: {
         approvalPolicy: this.approvalPolicy,
@@ -901,6 +902,14 @@ export class ThreadService {
     const turnId = turnIdFrom(params);
     // Native placeholder receipts cannot clear a bridge-managed unread mark.
     if (message.method === "thread/readState/changed" && threadId && this.stateStore.getReadState?.(threadId)) return;
+    if (message.method === "serverRequest/resolved") {
+      const requestId = String(params.requestId);
+      const stored = this.serverRequests.get(requestId);
+      if (stored && stored.public.threadId === threadId) {
+        this.serverRequests.delete(requestId);
+        this.eventHub.publish("bridge/requestResolved", { requestId, threadId, reason: "app_server_resolved" });
+      }
+    }
     if (message.method === "thread/readState/changed" && threadId) this.completionReadStates.delete(threadId);
     if (message.method === "turn/started" && threadId && turnId && !this.completedTurns.has(turnId)) {
       this.completionReadStates.delete(threadId);

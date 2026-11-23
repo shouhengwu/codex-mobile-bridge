@@ -34,6 +34,7 @@ export const state = {
   submitting: false,
   takingOver: false,
   requests: new Map(),
+  requestsRevision: 0,
   streaming: new Map(),
   retryAction: null,
   searchTimer: null,
