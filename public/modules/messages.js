@@ -188,12 +188,52 @@ export function createMessageView({ elements, state, toast, onLoadOlder, onLoadD
     return elements.messages.scrollHeight - elements.messages.scrollTop - elements.messages.clientHeight < 100;
   }
 
+  const questionTopInset = 12;
+  let jumpingToQuestion = false;
+
+  function previousQuestion() {
+    const top = elements.messages.getBoundingClientRect().top;
+    return [...elements.messages.querySelectorAll(".message.user:not(.queued)")]
+      .reverse().find((question) => question.getBoundingClientRect().top < top - 1);
+  }
+
+  function updateScrollControls() {
+    elements.scrollBottom.classList.toggle("hidden", isNearBottom());
+    elements.scrollQuestion.classList.toggle("hidden", !previousQuestion() && !state.historyCursor);
+  }
+
+  async function scrollToPreviousQuestion() {
+    if (jumpingToQuestion) return;
+    jumpingToQuestion = true;
+    const selectionVersion = state.selectionVersion;
+    try {
+      let question = previousQuestion();
+      while (!question && state.historyCursor && !state.historyLoading && onLoadOlder) {
+        const cursor = state.historyCursor;
+        await onLoadOlder();
+        if (selectionVersion !== state.selectionVersion) return;
+        question = previousQuestion();
+        if (cursor === state.historyCursor) break;
+      }
+      if (!question) return;
+      const viewport = elements.messages.getBoundingClientRect();
+      const bounds = question.getBoundingClientRect();
+      elements.messages.scrollTo({
+        top: Math.max(0, elements.messages.scrollTop + bounds.top - viewport.top - questionTopInset),
+        behavior: globalThis.matchMedia?.("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",
+      });
+    } finally {
+      jumpingToQuestion = false;
+      updateScrollControls();
+    }
+  }
+
   function scrollToBottom(smooth = true) {
     elements.messages.scrollTo({ top: elements.messages.scrollHeight, behavior: smooth ? "smooth" : "auto" });
     elements.scrollBottom.classList.add("hidden");
   }
 
-  function renderMessages({ preserveTop = false, previousHeight = 0 } = {}) {
+  function renderMessages({ preserveTop = false, previousHeight = 0, previousTop = 0 } = {}) {
     const nodes = [];
     if (state.historyCursor) {
       const older = document.createElement("button");
@@ -209,8 +249,9 @@ export function createMessageView({ elements, state, toast, onLoadOlder, onLoadD
     if (!entries.length && state.selected) nodes.push(emptyState(t("threads.empty"), t("threads.emptyHelp"), "＋"));
     if (!state.selected) nodes.push(emptyState(t("threads.noneSelected"), t("threads.selectHelp"), "⌁"));
     elements.messages.replaceChildren(...nodes);
-    if (preserveTop) elements.messages.scrollTop = elements.messages.scrollHeight - previousHeight;
+    if (preserveTop) elements.messages.scrollTop = previousTop + elements.messages.scrollHeight - previousHeight;
     else scrollToBottom(false);
+    updateScrollControls();
   }
 
   return {
@@ -218,6 +259,8 @@ export function createMessageView({ elements, state, toast, onLoadOlder, onLoadD
     isNearBottom,
     renderMessages,
     scrollToBottom,
+    updateScrollControls,
+    scrollToPreviousQuestion,
     renderEntryBody,
   };
 }

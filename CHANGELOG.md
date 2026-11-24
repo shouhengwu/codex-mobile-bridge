@@ -7,6 +7,8 @@ All notable changes to Codex Mobile Bridge are documented here.
 - Keep usage-limit, unavailable-model and other turn failures visible in the
   conversation, including live errors and reloaded history. Show send failures
   without requiring tool details to be expanded.
+- Jump upward from the current conversation viewport to the preceding question,
+  continuing through older history when needed and preserving the reading position.
 
 - Show native asynchronous user-input questions and options in conversation
   history and live messages, including question-only messages. Option buttons
