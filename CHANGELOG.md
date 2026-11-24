@@ -4,6 +4,9 @@ All notable changes to Codex Mobile Bridge are documented here.
 
 ## Unreleased
 
+- Keep cached page HTML and translation modules on the same installed shell version
+  so updates do not expose untranslated action keys such as Mark as unread.
+
 - Harden Windows setup against missing Tailscale Serve status fields and premature
   version-probe termination. Show Tailscale Serve activation instructions on startup.
 
