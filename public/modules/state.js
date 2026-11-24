@@ -11,6 +11,7 @@ export const state = {
   threadSummaryVersion: 0,
   threadSummaryRevisions: new Map(),
   completedTurns: new Set(),
+  readStatePending: new Set(),
   selected: null,
   models: [],
   modelsLoading: false,

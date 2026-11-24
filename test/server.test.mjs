@@ -133,6 +133,37 @@ test("bridge serves the UI and maps the Codex protocol", async (context) => {
   const list = await (await fetch(`${baseUrl}/api/threads`)).json();
   assert.equal(list.data[0].id, "thread-1");
   assert.equal(list.data.length, 6);
+  assert.equal(list.data[0].readState.revision, "initial:thread-1");
+  const markResponse = await fetch(`${baseUrl}/api/threads/thread-1/read-state`, {
+    method: "PATCH", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ read: false, expectedRevision: list.data[0].readState.revision }),
+  });
+  assert.equal(markResponse.status, 200);
+  const marked = await markResponse.json();
+  assert.equal(marked.readState.firstUnread.type, "threadStart");
+  const afterMark = await (await fetch(`${baseUrl}/api/threads?refresh=1`)).json();
+  assert.equal(afterMark.data[0].readState.firstUnread.type, "threadStart");
+  const staleMark = await fetch(`${baseUrl}/api/threads/thread-1/read-state`, {
+    method: "PATCH", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ read: false, expectedRevision: "initial:thread-1" }),
+  });
+  assert.equal(staleMark.status, 409);
+  assert.equal((await staleMark.json()).error.code, "read_state_conflict");
+  const invalidMark = await fetch(`${baseUrl}/api/threads/thread-1/read-state`, {
+    method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ read: false }),
+  });
+  assert.equal(invalidMark.status, 400);
+  const crossSiteMark = await fetch(`${baseUrl}/api/threads/thread-1/read-state`, {
+    method: "PATCH", headers: { "Content-Type": "application/json", "Sec-Fetch-Site": "cross-site" },
+    body: JSON.stringify({ read: false, expectedRevision: marked.readState.revision }),
+  });
+  assert.equal(crossSiteMark.status, 403);
+  const readResponse = await fetch(`${baseUrl}/api/threads/thread-1/read-state`, {
+    method: "PATCH", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ read: true, expectedRevision: marked.readState.revision }),
+  });
+  assert.equal(readResponse.status, 200);
+  assert.equal((await readResponse.json()).readState.firstUnread, null);
   const pinned = await (await fetch(`${baseUrl}/api/pinned-threads?refresh=1`)).json();
   assert.deepEqual(pinned.data.map((thread) => thread.id), ["pinned-old", "thread-1"]);
   const searchedPins = await (await fetch(`${baseUrl}/api/pinned-threads?search=Older`)).json();

@@ -16,6 +16,7 @@ export const elements = {
   drawerNewThreadButton: byId("drawerNewThreadButton"),
   drawerRefreshButton: byId("drawerRefreshButton"),
   drawerArchiveThreadButton: byId("drawerArchiveThreadButton"),
+  drawerMarkUnreadButton: byId("drawerMarkUnreadButton"),
   drawerThemeButton: byId("drawerThemeButton"),
   drawerThemeText: byId("drawerThemeText"),
   drawerLanguageButton: byId("drawerLanguageButton"),

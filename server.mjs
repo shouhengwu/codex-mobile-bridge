@@ -160,6 +160,7 @@ function routeName(method, pathname) {
   if (/^\/api\/threads\/[^/]+\/settings$/.test(pathname)) return "thread_settings_update";
   if (/^\/api\/threads\/[^/]+\/interrupt$/.test(pathname)) return "turn_interrupt";
   if (/^\/api\/threads\/[^/]+\/archive$/.test(pathname)) return "thread_archive";
+  if (/^\/api\/threads\/[^/]+\/read-state$/.test(pathname)) return "thread_read_state";
   if (/^\/api\/threads\/[^/]+$/.test(pathname)) return "thread_read";
   if (/^\/api\/requests\/[^/]+$/.test(pathname)) return "request_response";
   return pathname.startsWith("/api/") ? "api_unknown" : "static";
@@ -380,6 +381,12 @@ async function handleApi(request, response, url, id) {
   const archiveMatch = url.pathname.match(/^\/api\/threads\/([^/]+)\/archive$/);
   if (archiveMatch && request.method === "POST") {
     json(response, 200, await threads.archiveThread(pathId(archiveMatch)), id);
+    return true;
+  }
+
+  const readStateMatch = url.pathname.match(/^\/api\/threads\/([^/]+)\/read-state$/);
+  if (readStateMatch && request.method === "PATCH") {
+    json(response, 200, await threads.updateReadState(pathId(readStateMatch), await readJson(request, MAX_BODY_BYTES)), id);
     return true;
   }
 

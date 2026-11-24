@@ -36,13 +36,17 @@ export function threadClient(thread = {}) {
   return /(?:^|[\\/])\.openclaw(?:[\\/]|$)/i.test(cwd) ? "openclaw" : "codex";
 }
 
-function filterThreadPage(result, client) {
+function filterThreadPage(result, client, stateStore) {
   const collectionKey = ["data", "threads", "items"].find((key) => Array.isArray(result?.[key]));
   if (!collectionKey) return result;
-  return {
-    ...result,
-    [collectionKey]: result[collectionKey].filter((thread) => threadClient(thread) === client),
-  };
+  const readStates = { ...result.readStates };
+  const threads = result[collectionKey].filter((thread) => threadClient(thread) === client).map((thread) => {
+    const readState = stateStore.getReadState?.(thread.id) || result.readStates?.[thread.id] || thread.readState;
+    if (!readState) return thread;
+    readStates[thread.id] = readState;
+    return { ...thread, readState };
+  });
+  return { ...result, [collectionKey]: threads, ...(Object.keys(readStates).length ? { readStates } : {}) };
 }
 
 function optionalModelSetting(value, maxLength) {
@@ -164,6 +168,7 @@ export class ThreadService {
     this.archiveOperation = null;
     this.activeTurns = new Map();
     this.completedTurns = new Set();
+    this.completionReadStates = new Map();
     this.loadedThreads = new Set();
     this.releasePromises = new Map();
     this.disconnectRecycleTimer = null;
@@ -184,6 +189,7 @@ export class ThreadService {
       if (!snapshot.ready) {
         this.activeTurns.clear();
         this.completedTurns.clear();
+        this.completionReadStates.clear();
         this.serverRequests.clear();
         this.loadedThreads.clear();
         this.modelCatalogCache = null;
@@ -223,20 +229,20 @@ export class ThreadService {
     }
     const cacheKey = !cursor && !searchTerm ? JSON.stringify({ limit, sectionId, sortKey }) : null;
     const cached = cacheKey ? this.threadListCache.get(cacheKey) : null;
-    if (!refresh && cached && cached.expiresAt > Date.now()) return filterThreadPage(cached.value, client);
+    if (!refresh && cached && cached.expiresAt > Date.now()) return filterThreadPage(cached.value, client, this.stateStore);
     if (!refresh && cacheKey && this.threadListInflight.has(cacheKey)) {
-      return filterThreadPage(await this.threadListInflight.get(cacheKey), client);
+      return filterThreadPage(await this.threadListInflight.get(cacheKey), client, this.stateStore);
     }
 
     const load = this.#listThreads({ limit, cursor, searchTerm, sectionId, sortKey });
-    if (!cacheKey) return filterThreadPage(await load, client);
+    if (!cacheKey) return filterThreadPage(await load, client, this.stateStore);
     this.threadListInflight.set(cacheKey, load);
     try {
       const value = await load;
       if (this.threadListInflight.get(cacheKey) === load) {
         this.threadListCache.set(cacheKey, { value, expiresAt: Date.now() + 5_000 });
       }
-      return filterThreadPage(value, client);
+      return filterThreadPage(value, client, this.stateStore);
     } finally {
       if (this.threadListInflight.get(cacheKey) === load) this.threadListInflight.delete(cacheKey);
     }
@@ -402,10 +408,54 @@ export class ThreadService {
 
   async getThread(threadId) {
     try {
-      return await this.client.request("thread/read", { threadId, includeTurns: false });
+      const result = await this.client.request("thread/read", { threadId, includeTurns: false });
+      if (!result.thread) return result;
+      const readState = this.stateStore.getReadState?.(threadId) || result.readState || result.thread.readState
+        || this.stateStore.ensureReadState?.(threadId);
+      return readState ? { ...result, readState, thread: { ...result.thread, readState } } : result;
     } catch (error) {
       throw this.#threadReadFailure(threadId, error);
     }
+  }
+
+  async updateReadState(threadId, { read, expectedRevision } = {}) {
+    if (typeof read !== "boolean" || typeof expectedRevision !== "string" || !expectedRevision || expectedRevision.length > 4096) {
+      throw new BridgeError("已读状态无效", { status: 400, code: "invalid_read_state" });
+    }
+    if (expectedRevision.startsWith("bridge:") || this.stateStore.getReadState?.(threadId)) {
+      return this.#updateLocalReadState(threadId, read, expectedRevision);
+    }
+    try {
+      const result = await this.client.request("thread/readState/update", {
+        threadId, expectedRevision, operation: { type: read ? "read" : "unread" },
+      });
+      this.#invalidateThreadList();
+      return result;
+    } catch (error) {
+      if (/revision|conflict/i.test(error?.message || "")) {
+        throw new BridgeError("会话已发生变化，请刷新后重新操作", { status: 409, code: "read_state_conflict" });
+      }
+      if (error?.code === -32601 || /read state.*(unavailable|unsupported)|durable.*unavailable/i.test(error?.message || "")) {
+        if (this.stateStore.ensureReadState) {
+          // Only establish the fallback once. A concurrent local mark must still
+          // reject this older native revision instead of overwriting that mark.
+          if (this.stateStore.getReadState(threadId)) return this.#updateLocalReadState(threadId, read, expectedRevision);
+          const initial = this.stateStore.ensureReadState(threadId);
+          return this.#updateLocalReadState(threadId, read, initial.revision);
+        }
+        throw new BridgeError("此会话暂不支持已读标记", { status: 409, code: "read_state_unavailable" });
+      }
+      throw rpcFailure(error);
+    }
+  }
+
+  #updateLocalReadState(threadId, read, expectedRevision) {
+    const readState = this.stateStore.updateReadState?.(threadId, { read, expectedRevision });
+    if (!readState) throw new BridgeError("会话已发生变化，请刷新后重新操作", { status: 409, code: "read_state_conflict" });
+    this.completionReadStates.delete(threadId);
+    this.#invalidateThreadList();
+    this.eventHub.publish("thread/readState/changed", { threadId, readState });
+    return { readState };
   }
 
   #threadReadFailure(threadId, error) {
@@ -791,14 +841,22 @@ export class ThreadService {
     const params = message.params || {};
     const threadId = threadIdFrom(params);
     const turnId = turnIdFrom(params);
-    if (message.method === "turn/started" && threadId && turnId && !this.completedTurns.has(turnId)) this.activeTurns.set(threadId, turnId);
+    // Native placeholder receipts cannot clear a bridge-managed unread mark.
+    if (message.method === "thread/readState/changed" && threadId && this.stateStore.getReadState?.(threadId)) return;
+    if (message.method === "thread/readState/changed" && threadId) this.completionReadStates.delete(threadId);
+    if (message.method === "turn/started" && threadId && turnId && !this.completedTurns.has(turnId)) {
+      this.completionReadStates.delete(threadId);
+      this.activeTurns.set(threadId, turnId);
+    }
     if (message.method === "turn/completed" && threadId) {
+      const alreadyCompleted = turnId && this.completedTurns.has(turnId);
       if (turnId) {
         this.completedTurns.add(turnId);
         if (this.completedTurns.size > 512) this.completedTurns.delete(this.completedTurns.values().next().value);
       }
       if (!turnId || !this.activeTurns.has(threadId) || this.activeTurns.get(threadId) === turnId) {
         this.activeTurns.delete(threadId);
+        if (!alreadyCompleted && params.turn?.status !== "interrupted") void this.#markCompletedTurnUnread(threadId);
         this.#resolveServerRequestsForThread(threadId);
         void this.#releaseThread(threadId).finally(() => this.#drainQueue(threadId));
       }
@@ -806,6 +864,25 @@ export class ThreadService {
     if (message.method === "thread/closed" && threadId) this.loadedThreads.delete(threadId);
     if (/^(thread\/|threadSection\/|turn\/)/.test(message.method)) this.#invalidateThreadList();
     this.eventHub.publish(message.method, params);
+  }
+
+  async #markCompletedTurnUnread(threadId) {
+    const pending = Symbol();
+    this.completionReadStates.set(threadId, pending);
+    try {
+      const result = await this.getThread(threadId);
+      // A new turn or receipt notification supersedes this completion. Native
+      // unread positions are more precise than an explicit thread-start mark.
+      if (this.completionReadStates.get(threadId) !== pending) return;
+      const readState = result.thread?.readState;
+      if (!readState?.revision || readState.firstUnread) return;
+      await this.updateReadState(threadId, { read: false, expectedRevision: readState.revision });
+    } catch (error) {
+      // Never retry with a fresh revision: another client may have read the result.
+      this.logger.info("completion_read_state_skipped", { threadId, code: error?.code || "read_state_failed" });
+    } finally {
+      if (this.completionReadStates.get(threadId) === pending) this.completionReadStates.delete(threadId);
+    }
   }
 
   #releaseThread(threadId) {

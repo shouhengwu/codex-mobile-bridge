@@ -57,6 +57,18 @@ Server remain local to the Windows host.
   terminal turns, and desktop pin order. Event revisions keep older HTTP reads
   from overwriting newer UI state. A visible-page poll reconciles external updates
   without discarding loaded pages; terminal events update every listed thread.
+- Read/unread markers prefer native App Server read receipts. List receipts are
+  attached to row summaries; `PATCH /api/threads/:id/read-state` forwards the seen
+  revision to `thread/readState/update`. Conflicts require another user action.
+  Explicitly reopening a conversation acknowledges it; passive reads do not.
+  On turn completion, the bridge marks the result unread if the runtime supplies
+  a read receipt without an unread position. New turns or receipt notifications
+  cancel pending marks; revision conflicts are never retried automatically.
+  Threads whose transcript receipts or native mutations are unavailable use
+  bridge-local receipts persisted in `bridge-state.json`. These receipts have
+  `bridge:` revisions, are attached to both list and detail responses, and use
+  the same compare-and-swap and SSE notification behavior. Native placeholder
+  notifications cannot overwrite a local mark.
 - `public/modules/i18n.js` owns English and Simplified Chinese messages, browser
   language preference, and static-document translation.
 - `setup.ps1` discovers dependencies, selects non-conflicting ports, writes the

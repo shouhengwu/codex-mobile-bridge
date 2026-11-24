@@ -4,6 +4,21 @@ All notable changes to Codex Mobile Bridge are documented here.
 
 ## Unreleased
 
+- Mark completed turns unread when the runtime does not supply an unread
+  position, including while the phone is disconnected. Preserve newer receipts
+  and acknowledge the loaded transcript revision when reopening a conversation.
+  Persist bridge-local receipts when native transcript receipts or mutations are
+  unavailable, including paginated conversations with placeholder list receipts.
+
+- Show active conversations with a red Running badge beside the title, matching
+  the unread badge in both themes. Keep both badges visible when applicable and
+  clear the running badge when work finishes.
+
+- Add Mark as unread to the conversation action menu, with a distinct unread badge.
+  Store native Codex read receipts using revision checks so marks survive Bridge
+  restarts and are shared with desktop. Explicitly reopening a conversation marks
+  it read; background refreshes preserve manually marked unread conversations.
+
 - Move recently active conversations up immediately and synchronize generated names
   and previews with the sidebar and chat header without a page reload. Preserve
   desktop pin order, loaded history pages, and unsent drafts during reconciliation.

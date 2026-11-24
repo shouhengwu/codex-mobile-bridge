@@ -4,6 +4,7 @@ import { dirname } from "node:path";
 
 const MAX_DRAFTS = 100;
 const MAX_QUEUED_MESSAGES = 100;
+const MAX_READ_STATES = 2000;
 const MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 
 export class BridgeStateStore {
@@ -11,6 +12,7 @@ export class BridgeStateStore {
     this.filePath = filePath;
     this.drafts = new Map();
     this.queuedMessages = [];
+    this.readStates = new Map();
     this.#load();
   }
 
@@ -27,6 +29,29 @@ export class BridgeStateStore {
   removeDraft(threadId) {
     if (!this.drafts.delete(threadId)) return;
     this.#save();
+  }
+
+  getReadState(threadId) {
+    return this.readStates.get(threadId) || null;
+  }
+
+  ensureReadState(threadId) {
+    const current = this.getReadState(threadId);
+    if (current) return current;
+    const readState = { firstUnread: null, revision: `bridge:${randomUUID()}` };
+    this.readStates.set(threadId, readState);
+    this.#compact();
+    this.#save();
+    return readState;
+  }
+
+  updateReadState(threadId, { read, expectedRevision }) {
+    if (this.getReadState(threadId)?.revision !== expectedRevision) return null;
+    const readState = { firstUnread: read ? null : { type: "threadStart" }, revision: `bridge:${randomUUID()}` };
+    this.readStates.delete(threadId);
+    this.readStates.set(threadId, readState);
+    this.#save();
+    return readState;
   }
 
   enqueueMessage(threadId, text, { reason = "manual", model = null, effort = null } = {}) {
@@ -106,6 +131,12 @@ export class BridgeStateStore {
           this.drafts.set(item.threadId, item.createdAt);
         }
       }
+      for (const item of parsed.readStates || []) {
+        if (typeof item?.threadId === "string" && typeof item.revision === "string" && item.revision.startsWith("bridge:")
+          && (item.firstUnread === null || item.firstUnread?.type === "threadStart")) {
+          this.readStates.set(item.threadId, { revision: item.revision, firstUnread: item.firstUnread === null ? null : { type: "threadStart" } });
+        }
+      }
       for (const item of parsed.queuedMessages || []) {
         if (
           typeof item?.id === "string"
@@ -138,6 +169,7 @@ export class BridgeStateStore {
       if (createdAt < cutoff) this.drafts.delete(threadId);
     }
     while (this.drafts.size > MAX_DRAFTS) this.drafts.delete(this.drafts.keys().next().value);
+    while (this.readStates.size > MAX_READ_STATES) this.readStates.delete(this.readStates.keys().next().value);
     this.queuedMessages = this.queuedMessages.filter((item) => item.createdAt >= cutoff).slice(-MAX_QUEUED_MESSAGES);
   }
 
@@ -145,9 +177,10 @@ export class BridgeStateStore {
     mkdirSync(dirname(this.filePath), { recursive: true });
     const temporary = `${this.filePath}.${process.pid}.tmp`;
     const payload = {
-      version: 4,
+      version: 5,
       pendingFirstTurns: [...this.drafts].map(([threadId, createdAt]) => ({ threadId, createdAt })),
       queuedMessages: this.queuedMessages,
+      readStates: [...this.readStates].map(([threadId, readState]) => ({ threadId, ...readState })),
     };
     writeFileSync(temporary, `${JSON.stringify(payload, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
     renameSync(temporary, this.filePath);
