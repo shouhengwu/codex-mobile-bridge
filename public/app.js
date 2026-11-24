@@ -106,7 +106,7 @@ function pollThreadSummaries() {
   }
 }
 
-const { emptyState, isNearBottom, renderMessages, renderEntryBody, scrollToBottom } = createMessageView({
+const { emptyState, isNearBottom, renderMessages, renderEntryBody, scrollToBottom, updateScrollControls, scrollToPreviousQuestion } = createMessageView({
   elements,
   state,
   toast,
@@ -626,6 +626,7 @@ async function selectThread(summary, { isNew = false, silent = false } = {}) {
   state.historyItems = [];
   state.queuedMessages = [];
   state.externalWriter = false;
+  state.historyLoading = false;
   state.historyCursor = null;
   state.latestTurnId = null;
   state.streaming.clear();
@@ -680,22 +681,29 @@ async function selectThread(summary, { isNew = false, silent = false } = {}) {
 
 async function loadOlderTurns() {
   if (state.historyLoading || !state.historyCursor || !state.selected) return;
+  const version = state.selectionVersion;
+  const threadId = state.selected.id;
   state.historyLoading = true;
   const previousHeight = elements.messages.scrollHeight;
-  renderMessages({ preserveTop: true, previousHeight });
+  const previousTop = elements.messages.scrollTop;
+  renderMessages({ preserveTop: true, previousHeight, previousTop });
   try {
     const cursor = encodeURIComponent(state.historyCursor);
-    const result = await api(`/api/threads/${encodeURIComponent(state.selected.id)}/turns?limit=${TURN_PAGE_SIZE}&cursor=${cursor}`, { timeoutMs: 45_000 });
+    const result = await api(`/api/threads/${encodeURIComponent(threadId)}/turns?limit=${TURN_PAGE_SIZE}&cursor=${cursor}`, { timeoutMs: 45_000 });
+    if (version !== state.selectionVersion) return;
     const known = new Set(state.historyItems.map((entry) => entry.id));
     const older = entriesFromTurns(result).filter((entry) => !known.has(entry.id));
     state.historyItems = [...older, ...state.historyItems];
     state.historyCursor = result.nextCursor || null;
   } catch (error) {
+    if (version !== state.selectionVersion) return;
     const info = errorInfo(error);
     showBanner(info.message, { retry: info.retryable ? loadOlderTurns : null });
   } finally {
-    state.historyLoading = false;
-    renderMessages({ preserveTop: true, previousHeight });
+    if (version === state.selectionVersion) {
+      state.historyLoading = false;
+      renderMessages({ preserveTop: true, previousHeight, previousTop });
+    }
   }
 }
 
@@ -1639,7 +1647,10 @@ elements.threadSearch.addEventListener("input", () => {
 });
 elements.bannerClose.addEventListener("click", hideBanner);
 elements.bannerRetry.addEventListener("click", () => state.retryAction?.());
-elements.messages.addEventListener("scroll", () => elements.scrollBottom.classList.toggle("hidden", isNearBottom()));
+elements.messages.addEventListener("scroll", updateScrollControls);
+elements.scrollQuestion.addEventListener("click", scrollToPreviousQuestion);
+new ResizeObserver(updateScrollControls).observe(elements.messages);
+new MutationObserver(updateScrollControls).observe(elements.messages, { childList: true, subtree: true, characterData: true });
 elements.scrollBottom.addEventListener("click", () => scrollToBottom());
 elements.messageInput.addEventListener("input", () => {
   resizeComposer();
