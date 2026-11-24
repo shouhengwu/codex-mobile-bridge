@@ -13,6 +13,8 @@
   --link: #6bbdf2;
   --accent-ink: #082218;
   --accent-soft: #15392b;
+  --thread-running: #ff858d;
+  --thread-running-bg: #3a1f24;
   --warning: #f4c56c;
   --warning-soft: #352a17;
   --danger: #ff858d;
@@ -67,6 +69,8 @@
   --link: #2563eb;
   --accent-ink: #ffffff;
   --accent-soft: #eef4ff;
+  --thread-running: #b42318;
+  --thread-running-bg: #fef3f2;
   --warning: #526071;
   --warning-soft: #ffffff;
   --danger: #475467;
@@ -187,7 +191,7 @@ body.action-drawer-open .action-drawer { opacity: 1; pointer-events: auto; trans
 .drawer-action { min-width: 0; min-height: 44px; padding: 8px 10px; display: flex; align-items: center; justify-content: flex-start; gap: 9px; text-align: left; font-size: 12px; }
 .drawer-action-icon { width: 20px; height: 20px; flex: 0 0 20px; display: grid; place-items: center; }
 .drawer-action-icon > svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
-.drawer-archive-action { grid-column: 1 / -1; }
+.drawer-conversation-action { grid-column: 1 / -1; }
 .action-drawer-backdrop { position: fixed; z-index: 21; inset: var(--topbar-height) 0 0; border: 0; border-radius: 0; background: var(--drawer-overlay); }
 
 .workspace { min-height: 0; display: grid; grid-template-columns: minmax(260px, 330px) minmax(0, 1fr); }
@@ -253,7 +257,9 @@ body.action-drawer-open .action-drawer { opacity: 1; pointer-events: auto; trans
 .thread-item.active { background: var(--panel-soft); box-shadow: inset 3px 0 var(--accent); }
 .thread-line { min-width: 0; display: flex; align-items: center; gap: 7px; }
 .thread-title { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 620; }
-.thread-activity { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 8px var(--accent); }
+.thread-item.unread .thread-title { font-weight: 800; }
+.thread-unread, .thread-activity { flex: 0 0 auto; padding: 2px 5px; border: 1px solid var(--focus-border); border-radius: 5px; color: var(--accent); font-size: 10px; font-weight: 700; white-space: nowrap; }
+.thread-activity { border-color: var(--thread-running); color: var(--thread-running); background: var(--thread-running-bg); }
 .thread-meta { min-width: 0; color: var(--muted); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .thread-cwd { color: var(--subtle); }
 .list-state, .empty-state { color: var(--muted); text-align: center; }
