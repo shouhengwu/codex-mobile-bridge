@@ -12,6 +12,7 @@ import {
   threadData,
   threadObject,
   titleOf,
+  turnErrorEntry,
 } from "./modules/formatters.js";
 import { createMessageView } from "./modules/messages.js";
 import { EventStreamController } from "./modules/event-stream.js";
@@ -711,7 +712,7 @@ async function loadItemDetail(entry) {
 }
 
 function mergeTurnDelta(result) {
-  const incoming = entriesFromTurns(result);
+  const incoming = entriesFromTurns(result, state.historyItems);
   if (result.resetRequired || !state.latestTurnId) {
     state.historyItems = incoming;
     state.historyCursor = result.nextCursor || null;
@@ -941,7 +942,7 @@ async function sendMessage(event) {
     }
     const info = errorInfo(error);
     entry.pending = false;
-    state.historyItems.push({ id: `error:${Date.now()}`, role: "tool", text: info.message, type: t("message.sendFailed"), pending: false });
+    state.historyItems.push({ id: `error:${Date.now()}`, role: "error", text: info.message, type: "sendError", pending: false });
     if (info.code === "turn_active" && info.details?.turnId) {
       startThreadTurn(state, threadId, info.details.turnId);
       syncSelectedActivity();
@@ -1183,6 +1184,11 @@ function handleEvent(event) {
   }
   if (threadId && threadId !== state.selected?.id) return;
 
+  if (method === "error" && threadId === state.selected?.id && threadId && params.willRetry !== true) {
+    state.historyRevision = (state.historyRevision || 0) + 1;
+    recordTurnError({ id: turnId || state.activeTurnId, status: "failed", error: params.error });
+  }
+
   if (["item/started", "item/completed"].includes(method) && params.item?.type === "agentMessage") {
     const questions = asyncQuestions(params.item);
     if (questions.length) {
@@ -1233,9 +1239,8 @@ function handleEvent(event) {
     state.busy = false;
     state.streaming.clear();
     const status = params.turn?.status || "completed";
-    if (status === "failed") {
-      const message = params.turn?.error?.message || t("turn.codexFailed");
-      showBanner(message);
+    if (status === "failed" || params.turn?.error) {
+      recordTurnError(params.turn);
       updateTurnState("error", t("turn.failed"));
     } else {
       updateTurnState("idle", status === "interrupted" ? t("turn.stopped") : t("turn.completed"));
@@ -1243,6 +1248,22 @@ function handleEvent(event) {
     renderThreads();
     if (state.selected) setTimeout(() => syncSelectedThread(), 350);
   }
+}
+
+function recordTurnError(turn) {
+  const entry = turnErrorEntry(turn);
+  if (!entry) return;
+  const existing = state.historyItems.find((item) => item.id === entry.id);
+  if (existing) {
+    if (turn.error) Object.assign(existing, entry);
+  } else state.historyItems.push(entry);
+  for (const item of state.historyItems) {
+    if (item.turnId === entry.turnId) item.pending = false;
+  }
+  const nearBottom = isNearBottom();
+  const previousTop = elements.messages.scrollTop;
+  renderMessages();
+  if (!nearBottom) elements.messages.scrollTop = previousTop;
 }
 
 function renderRequests() {

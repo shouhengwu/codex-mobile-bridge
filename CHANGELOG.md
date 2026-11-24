@@ -4,6 +4,10 @@ All notable changes to Codex Mobile Bridge are documented here.
 
 ## Unreleased
 
+- Keep usage-limit, unavailable-model and other turn failures visible in the
+  conversation, including live errors and reloaded history. Show send failures
+  without requiring tool details to be expanded.
+
 - Show native asynchronous user-input questions and options in conversation
   history and live messages, including question-only messages. Option buttons
   prepare a reply without sending it. Show Needs input / Needs approval for native
