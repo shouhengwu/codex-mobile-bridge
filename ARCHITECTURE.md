@@ -39,6 +39,9 @@ Server remain local to the Windows host.
   While visible, the browser reconciles selected message history every ten seconds,
   including during sidebar searches. Metadata reads cannot block history updates;
   history snapshots cannot overwrite newer streamed text or local sends.
+  A send receipt does not imply its user item is already in persisted history.
+  Keep local questions through sparse snapshots and replace them when the same
+  turn and message text are returned, without resubmitting them.
   Native asynchronous questions on `agentMessage.questions` remain visible in
   compact history and live item notifications, even without message text. Their
   option buttons populate the ordinary composer. Blocking JSON-RPC requests

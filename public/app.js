@@ -724,16 +724,38 @@ async function loadItemDetail(entry) {
 
 function mergeTurnDelta(result) {
   const incoming = entriesFromTurns(result, state.historyItems);
+  let merged;
   if (result.resetRequired || !state.latestTurnId) {
-    state.historyItems = incoming;
+    merged = incoming;
     state.historyCursor = result.nextCursor || null;
   } else {
     const turnIds = new Set(incoming.map((entry) => entry.turnId).filter(Boolean));
     const preserved = state.historyItems.filter((entry) => !entry.turnId || !turnIds.has(entry.turnId));
-    state.historyItems = [...preserved, ...incoming];
+    merged = [...preserved, ...incoming];
   }
+  state.historyItems = reconcileLocalMessages(merged);
   state.latestTurnId = latestTurnId(result) || state.latestTurnId;
   state.streaming.clear();
+}
+
+function reconcileLocalMessages(incoming) {
+  const local = state.historyItems.filter((entry) => entry.optimistic);
+  const merged = incoming.filter((entry) => !entry.optimistic);
+  const echoes = merged.filter((entry) => entry.role === "user");
+  const matched = new Set();
+  for (const entry of local) {
+    const echo = entry.turnId && echoes.find((item) => !matched.has(item)
+      && item.turnId === entry.turnId && item.text === entry.text);
+    if (echo) {
+      matched.add(echo);
+      continue;
+    }
+    // Persisted history can lag the send receipt, even while a reply is streaming.
+    const index = entry.turnId ? merged.findIndex((item) => !item.optimistic && item.turnId === entry.turnId) : -1;
+    if (index < 0) merged.push(entry);
+    else merged.splice(index, 0, entry);
+  }
+  return merged;
 }
 
 async function syncSelectedThread({ background = false } = {}) {
@@ -907,7 +929,7 @@ async function sendMessage(event) {
   const queuedCount = Number(state.queuedByThread[threadId] || 0);
   const mode = state.busy || state.externalWriter || queuedCount > 0 ? "queue" : "start";
   state.historyRevision = (state.historyRevision || 0) + 1;
-  const entry = { id: `local:${Date.now()}`, turnId: null, role: "user", text, type: mode === "queue" ? t("message.queued") : "userMessage", pending: true };
+  const entry = { id: `local:${Date.now()}`, turnId: null, role: "user", text, type: mode === "queue" ? t("message.queued") : "userMessage", pending: true, optimistic: true };
   state.historyItems.push(entry);
   elements.messageInput.value = "";
   localStorage.removeItem(draftKey(threadId));
@@ -935,6 +957,7 @@ async function sendMessage(event) {
     syncSelectedActivity();
     elements.chatTitle.textContent = titleOf(state.selected);
     if (result?.mode === "start") {
+      state.historyItems = reconcileLocalMessages(state.historyItems);
       updateTurnState();
     } else if (result?.mode === "queue") {
       state.historyItems = state.historyItems.filter((item) => item !== entry);
@@ -953,6 +976,7 @@ async function sendMessage(event) {
     }
     const info = errorInfo(error);
     entry.pending = false;
+    entry.optimistic = false;
     state.historyItems.push({ id: `error:${Date.now()}`, role: "error", text: info.message, type: "sendError", pending: false });
     if (info.code === "turn_active" && info.details?.turnId) {
       startThreadTurn(state, threadId, info.details.turnId);

@@ -4,6 +4,8 @@ All notable changes to Codex Mobile Bridge are documented here.
 
 ## Unreleased
 
+- Keep newly sent questions visible while persisted history catches up, replacing
+  each local message only after its matching turn and text arrive from the server.
 - Close the conversation sidebar without reloading or scrolling when its current
   conversation is selected again. Preserve loaded history, live text and drafts.
 

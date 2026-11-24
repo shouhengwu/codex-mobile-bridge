@@ -87,6 +87,7 @@ function browser(state = fixture(), additions = {}) {
     ["function isThreadActive(", "function setConnection("],
     ["function syncSelectedActivity(", "function queueEntry("],
     ["function updateTurnState(", "function showBanner("],
+    ["function mergeTurnDelta(", "async function syncSelectedThread("],
     ["function handleEvent(", "function renderRequests("],
   ]) vm.runInContext(app.slice(app.indexOf(start), app.indexOf(end)), context);
   return { context, state, label };
@@ -211,6 +212,84 @@ function historyBrowser(api, additions = {}) {
 }
 
 const desktopHistory = () => ({ data: [{ id: "turn-1", items: [{ id: "reply", type: "agentMessage", text: "New desktop body" }] }] });
+
+function sendingBrowser(api, additions = {}) {
+  const fixture = historyBrowser(api, {
+    localStorage: { removeItem() {}, setItem() {} }, resizeComposer() {},
+    draftKey: (id) => id, selectedModelSettings: () => ({}), toast() {}, ...additions,
+  });
+  fixture.context.elements.messageInput = { value: "New question", focus() {} };
+  vm.runInContext(app.slice(app.indexOf("async function sendMessage("), app.indexOf("async function cancelQueuedMessage(")), fixture.context);
+  return fixture;
+}
+
+test("sending displays the question immediately and sparse history cannot hide it before the native echo", async () => {
+  for (const resetRequired of [false, true]) {
+    let finishSend;
+    let sends = 0;
+    const renders = [];
+    const { context, state } = sendingBrowser(async (path) => {
+      if (path.endsWith("/send")) { sends++; return new Promise((resolve) => { finishSend = resolve; }); }
+      return { data: [] };
+    }, { renderMessages() { renders.push(state.historyItems.map((entry) => entry.text)); } });
+    const pending = context.sendMessage({ preventDefault() {} });
+    assert.equal(context.elements.messageInput.value, "");
+    assert.equal(renders[0].at(-1), "New question", "the first render precedes the HTTP response");
+    finishSend({ mode: "start", turn: { id: "turn-2", status: "inProgress" } });
+    await pending;
+    context.mergeTurnDelta({ resetRequired, data: [{ id: "turn-2", items: [] }] });
+    assert.equal(state.historyItems.at(-1).text, "New question", "a send receipt does not mean the transcript already includes its user item");
+    context.mergeTurnDelta({ resetRequired, data: [{ id: "turn-2", items: [{ id: "reply-2", type: "agentMessage", text: "Working" }] }] });
+    assert.deepEqual(Array.from(state.historyItems.filter((entry) => entry.turnId === "turn-2"), (entry) => entry.text), ["New question", "Working"]);
+    const echoed = { resetRequired, data: [{ id: "turn-2", items: [
+      { id: "native-question", type: "userMessage", content: [{ type: "text", text: "New question" }] },
+      { id: "reply-2", type: "agentMessage", text: "Working" },
+    ] }] };
+    for (let attempt = 0; attempt < 3; attempt++) context.mergeTurnDelta(echoed);
+    const questions = state.historyItems.filter((entry) => entry.text === "New question");
+    assert.equal(questions.length, 1);
+    assert.equal(questions[0].id, "native-question");
+    assert.equal(sends, 1, "history reconciliation never submits the question again");
+  }
+});
+
+test("full history replacement cannot acknowledge a new question using identical text from an older turn", async () => {
+  const { context, state } = sendingBrowser(async () => ({ mode: "start", turn: { id: "turn-2" } }));
+  state.latestTurnId = null;
+  state.historyItems = [{ id: "earlier-question", turnId: "turn-1", role: "user", text: "New question" }];
+  await context.sendMessage({ preventDefault() {} });
+  context.mergeTurnDelta({ resetRequired: true, data: [{ id: "turn-1", items: [{ id: "earlier-question", type: "userMessage", text: "New question" }] }] });
+  assert.deepEqual(Array.from(state.historyItems, (entry) => entry.turnId), ["turn-1", "turn-2"]);
+  context.mergeTurnDelta({ resetRequired: true, data: [
+    { id: "turn-2", items: [{ id: "new-question", type: "userMessage", text: "New question" }] },
+    { id: "turn-1", items: [{ id: "earlier-question", type: "userMessage", text: "New question" }] },
+  ] });
+  assert.deepEqual(Array.from(state.historyItems, (entry) => entry.id), ["earlier-question", "new-question"]);
+});
+
+test("a native echo received before the send response is deduplicated as soon as its turn is known", async () => {
+  let finishSend;
+  const { context, state } = sendingBrowser(() => new Promise((resolve) => { finishSend = resolve; }));
+  const pending = context.sendMessage({ preventDefault() {} });
+  context.mergeTurnDelta({ data: [{ id: "turn-2", items: [{ id: "native-question", type: "userMessage", text: "New question" }] }] });
+  finishSend({ mode: "start", turn: { id: "turn-2" } });
+  await pending;
+  assert.equal(state.historyItems.filter((entry) => entry.text === "New question").length, 1);
+  assert.equal(state.historyItems.at(-1).id, "native-question");
+});
+
+test("failed sends retain the draft and error without retrying or treating the question as acknowledged", async () => {
+  let sends = 0;
+  const errors = [];
+  const { context, state } = sendingBrowser(async () => { sends++; throw new Error("Request failed"); }, {
+    showBanner: (message) => errors.push(message),
+  });
+  await context.sendMessage({ preventDefault() {} });
+  assert.equal(context.elements.messageInput.value, "New question");
+  assert.equal(state.historyItems.at(-1).type, "sendError");
+  assert.deepEqual(errors, ["Request failed"]);
+  assert.equal(sends, 1);
+});
 
 test("desktop messages arrive through background polling without SSE, including while searching", async () => {
   const requests = [];
